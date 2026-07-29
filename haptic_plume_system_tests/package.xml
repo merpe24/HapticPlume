@@ -4,7 +4,7 @@
   <name>haptic_plume_system_tests</name>
   <version>0.0.0</version>
   <description>Integration and system tests for verifying HapticPlume robot functionality</description>
-  <maintainer email="prem.pannavit@gmail.com">prem</maintainer>
+  <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

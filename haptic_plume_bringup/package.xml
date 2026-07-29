@@ -4,7 +4,7 @@
   <name>haptic_plume_bringup</name>
   <version>0.0.0</version>
   <description>Launch files and nodes for starting HapticPlume robot drivers</description>
-  <maintainer email="prem.pannavit@gmail.com">prem</maintainer>
+  <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

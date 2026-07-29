@@ -6,7 +6,7 @@
   <description>Contains the robot description files that define the physical aspects of a robot, 
   including its geometry, kinematics, dynamics, and visual aspects.
   </description>
-  <maintainer email="prem.pannavit@gmail.com">prem</maintainer>
+  <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
