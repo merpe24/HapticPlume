@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>haptic_plume_experiment</name>
+  <version>0.0.0</version>
+  <description>Experiment harness: trial lifecycle, condition gating, and offline estimator evaluation</description>
+  <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>haptic_plume_core</depend>
+  <depend>haptic_plume_estimation</depend>
+  <depend>haptic_plume_gas_sim</depend>
+  <depend>python3-numpy</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

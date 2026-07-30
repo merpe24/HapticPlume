@@ -12,6 +12,9 @@
   <exec_depend>haptic_plume_bringup</exec_depend>
   <exec_depend>haptic_plume_core</exec_depend>
   <exec_depend>haptic_plume_description</exec_depend>
+  <exec_depend>haptic_plume_estimation</exec_depend>
+  <exec_depend>haptic_plume_experiment</exec_depend>
+  <exec_depend>haptic_plume_gas_sim</exec_depend>
   <exec_depend>haptic_plume_gazebo</exec_depend>
   <exec_depend>haptic_plume_system_tests</exec_depend>
 
