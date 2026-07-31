@@ -1,0 +1,15 @@
+# Analytic world geometry. THE authority for collisions (haptic_plume_drone, B3)
+# and for the Parametric Risk Field (haptic_plume_haptics, Phase C) — D1.
+# Every segment must intersect z = 1.0 to be collidable — see frames.md §5.
+# haptic_plume_gazebo/worlds/pipeline.world MUST match these numbers (B6 test).
+ground_z: 0.0             # [m] floor plane in the map frame
+
+segments:                 # capsules: cylinder of `radius` about p0->p1, hemispherical caps
+  - name: main_run        # crosswind (wind blows toward +x), AT flight altitude
+    p0: [10.0, 5.0, 1.0]  # [m] map frame
+    p1: [10.0, 15.0, 1.0]
+    radius: 0.30
+  - name: riser           # vertical, ground up to the run, south end
+    p0: [10.0, 5.0, 0.0]
+    p1: [10.0, 5.0, 1.0]
+    radius: 0.30
