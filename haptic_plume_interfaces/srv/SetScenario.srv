@@ -1,0 +1,11 @@
+# Request: regenerate the gas world from a seed (haptic_plume_core.scenario.random_scenario)
+int32 n_sources             # number of leaks to place, >= 1
+int32 seed                  # RNG seed; the same seed always yield the same world
+---
+# Response
+bool success                # true if the scenario can be generated, false if the scenario cannot be generated
+string message              # human-readable result of error
+string scenario_name        # generated label
+float64 wind_direction      # theta [rad], direction the wind blows TOWARD (see frames.md)
+float64 wind_speed          # v [m/s]
+geometry_msgs/Point[] true_source_positions # GROUND TRUTH [m]
