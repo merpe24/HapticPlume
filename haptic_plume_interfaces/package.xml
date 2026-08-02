@@ -4,7 +4,7 @@
   <name>haptic_plume_interfaces</name>
   <version>0.0.0</version>
   <description>Custom messages and services for the HapticPlume gas-inspection drone.</description>
-  <maintainer email="prem.pananvit@gmail.com">premmm</maintainer>
+  <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

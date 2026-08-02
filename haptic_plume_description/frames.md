@@ -19,16 +19,27 @@ map
  └── odom                        (static identity)
       └── base_link
            ├── gas_sensor_link
+           ├── laser_frame
+           ├── prop_front_left_link
+           ├── prop_front_right_link
+           ├── prop_back_left_link
+           ├── prop_back_right_link
            └── camera_link
                 └── camera_optical_frame
 ```
+
+`/tf`, `/tf_static`, and `/robot_description` are **global**, not under `/hp`. The `/hp`
+namespace covers this project's data topics; TF is global by ROS convention, and
+namespacing it would force a `/tf` remap in every consumer, RViz and `tf2_tools` included.
 
 | Frame | Meaning | Published by |
 |---|---|---|
 | `map` | Scenario/world frame. Fixed. All Phase A math lives here. | static transform in the launch file |
 | `odom` | Odometry origin. Identity to `map` — a kinematic drone has zero drift. | static transform in the launch file |
 | `base_link` | Drone body origin, at the geometric centre of the airframe. | `drone_kinematics_node` (B3) |
-| `gas_sensor_link` | Point at which concentration is sampled. | `robot_state_publisher` (B2) |
+| `gas_sensor_link` | Point at which concentration is sampled. Coincident with `base_link` — see §5. | `robot_state_publisher` (B2) |
+| `laser_frame` | 3D lidar (Unitree). **Description-only** — nothing subscribes; it exists for airframe fidelity and the Phase F hardware path. Its gz sensor is off by default (`enable_gz_sensor:=false`) to protect the RTF budget. | `robot_state_publisher` (B2) |
+| `prop_*_link` | Four propellers, visual only, fixed joints (no `/joint_states`). | `robot_state_publisher` (B2) |
 | `camera_link` | FPV camera body frame. | `robot_state_publisher` (B2) |
 | `camera_optical_frame` | Optical frame for the image. | `robot_state_publisher` (B2) |
 
@@ -54,6 +65,8 @@ per step, and no wind-direction information could survive.
 | Minimum source separation | 2.0 m | `MIN_SOURCE_SEPARATION`, `scenario.py:35` |
 | Source height `z_s` | 1.0 m | `SOURCE_HEIGHT`, `scenario.py:36` |
 | Ground plane | `z = 0` | `config/obstacles.yaml` |
+| Airframe | Holybro X500 V2, 500 mm wheelbase | product spec |
+| Drone collision radius | 0.377 m (250 mm motor + 127 mm prop) | derived, `drone_prop.urdf.xacro` |
 
 ---
 
@@ -83,6 +96,11 @@ is an experimental confound and is forbidden.
 ## 4. Wind direction — sign convention
 
 **`theta` is the direction the wind blows TOWARD** — the direction the gas travels.
+
+Since the setting is indoor (decision, 2026-08-03), `theta` is better described as the
+**prevailing airflow direction** — HVAC- and doorway-driven, not outdoor wind. The maths and
+the sign convention below are unchanged; only the physical story is. That the free-field
+Gaussian plume is retained indoors is a disclosed limitation, listed in `CLAUDE.md`.
 
 Authority: `plume_model.world_to_plume` (`plume_model.py:90`) computes
 

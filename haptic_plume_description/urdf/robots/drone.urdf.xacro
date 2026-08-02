@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="drone">
+    <xacro:property name="M_PI" value="3.1415926535897931"/>
+
+    <xacro:arg name="prefix" default=""/>
+    <xacro:arg name="use_gazebo" default="false"/>
+
+    <xacro:include filename="$(find haptic_plume_description)/urdf/mech/drone_base.urdf.xacro"/>
+    <xacro:include filename="$(find haptic_plume_description)/urdf/mech/drone_prop.urdf.xacro"/>
+    <xacro:include filename="$(find haptic_plume_description)/urdf/sensors/gas_sensor.urdf.xacro"/>
+    <xacro:include filename="$(find haptic_plume_description)/urdf/sensors/fpv_camera.urdf.xacro"/>
+    <xacro:include filename="$(find haptic_plume_description)/urdf/sensors/lidar_sensor.urdf.xacro"/>
+
+    <xacro:drone_base prefix="$(arg prefix)"/>
+
+    <xacro:drone_prop prefix="$(arg prefix)" side="front_left" x_reflect="1" y_reflect="1"/>
+    <xacro:drone_prop prefix="$(arg prefix)" side="front_right" x_reflect="1" y_reflect="-1"/>
+    <xacro:drone_prop prefix="$(arg prefix)" side="back_left" x_reflect="-1" y_reflect="1"/>
+    <xacro:drone_prop prefix="$(arg prefix)" side="back_right" x_reflect="-1" y_reflect="-1"/>
+
+    <xacro:gas_sensor prefix="$(arg prefix)" parent="base_link"/>
+    <xacro:fpv_camera prefix="$(arg prefix)" parent="base_link"  xyz_offset="0.105 0 0" use_gazebo="$(arg use_gazebo)"/>
+    <xacro:lidar_sensor prefix="$(arg prefix)" parent="base_link" xyz_offset="0 0 0.09" use_gazebo="$(arg use_gazebo)"/>
+
+</robot>

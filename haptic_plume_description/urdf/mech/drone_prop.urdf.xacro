@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <!-- Change arm_offset, radius, mass to reflect real drone -->
+    <xacro:macro name="drone_prop" params="
+    prefix:=''
+    parent:='base_link'
+    side:='front_left'
+    x_reflect:=1
+    y_reflect:=1
+    arm_offset:=0.1768
+    radius:=0.127
+    height:=0.01
+    mass:=0.015
+    material_name:='drone_prop'
+    material_color:='0.90 0.45 0.10 1.0'
+    ">
+        <xacro:property name="ixx_iyy" value="${(mass/12) * (3*radius*radius + height*height)}" />
+        <xacro:property name="izz" value="${(mass/2) * (radius*radius)}"/>
+
+        <link name="${prefix}prop_${side}_link">
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <geometry>
+                    <cylinder radius="${radius}" length="${height}"/>
+                </geometry>
+                <material name="${material_name}">
+                    <color rgba="${material_color}"/>
+                </material>
+            </visual>
+        </link>
+
+        <joint name="${prefix}prop_${side}_joint" type="fixed">
+            <parent link="${prefix}${parent}"/>
+            <child link="${prefix}prop_${side}_link"/>
+            <origin xyz="${x_reflect*arm_offset} ${y_reflect*arm_offset} 0.03" rpy="0 0 0"/>
+        </joint>
+    </xacro:macro>
+
+</robot>

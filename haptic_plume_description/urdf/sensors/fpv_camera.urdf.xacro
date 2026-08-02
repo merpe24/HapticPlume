@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:property name="M_PI" value="3.1415926535897931" />
+
+    <xacro:macro name="fpv_camera" params="
+    prefix:=''
+    parent:='base_link'
+    frame_id:='camera_link'
+    optical_frame_id:='camera_optical_frame'
+    xyz_offset:='0.09 0 0'
+    rpy_offset:='0 0.35 0'
+    size:=0.03
+    mass:=0.05
+    use_gazebo:=false
+    topic_name:='fpv/image'
+    update_rate:=30
+    horizontal_fov:=1.396
+    image_width:=640
+    image_height:=480
+    clip_near:=0.1
+    clip_far:=100.0
+    ">
+
+        <link name="${prefix}${frame_id}"/>
+
+        <joint name="${prefix}${frame_id}_joint" type="fixed">
+            <parent link="${prefix}${parent}"/>
+            <child link="${prefix}${frame_id}"/>
+            <origin xyz="${xyz_offset}" rpy="${rpy_offset}"/>
+        </joint>
+
+
+        <!-- Optical frame: REP 103, z forward / x right / y down -->
+        <link name="${prefix}${optical_frame_id}"/>
+
+        <joint name="${prefix}${optical_frame_id}_joint" type="fixed">
+            <parent link="${prefix}${frame_id}"/>
+            <child link="${prefix}${optical_frame_id}"/>
+            <origin xyz="${xyz_offset}" rpy="${-M_PI/2} 0 ${-M_PI/2}"/>
+        </joint>
+
+        <xacro:if value="${use_gazebo}">
+            <gazebo reference="${prefix}${frame_id}">
+                <sensor name="${prefix}fpv_camera" type="camera">
+                <topic>${topic_name}</topic>
+                <update_rate>${update_rate}</update_rate>
+                <always_on>true</always_on>
+                <visualize>false</visualize>
+                <camera>
+                    <horizontal_fov>${horizontal_fov}</horizontal_fov>
+                    <image>
+                    <width>${image_width}</width>
+                    <height>${image_height}</height>
+                    <format>R8G8B8</format>
+                    </image>
+                    <clip>
+                    <near>${clip_near}</near>
+                    <far>${clip_far}</far>
+                    </clip>
+                </camera>
+                <gz_frame_id>${prefix}${optical_frame_id}</gz_frame_id>
+                </sensor>
+            </gazebo>
+        </xacro:if>
+
+    </xacro:macro>
+
+</robot>

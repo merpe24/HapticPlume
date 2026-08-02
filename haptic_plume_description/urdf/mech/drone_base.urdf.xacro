@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <!-- Change length, width, height, mass to reflect real drone -->
+    <xacro:macro name="drone_base" params="
+    prefix:=''
+    body_length:=0.18
+    body_width:=0.18
+    body_height:=0.10
+    mass:=1.5
+    material_name='drone_body'
+    material_color='0.25 0.25 0.28 1.0'
+    enable_collision:=true
+    ">
+
+        <!-- Box inertia about the centre of mass, from mass and geometry -->
+        <xacro:property name="ixx" value="${(mass/12) * (body_width*body_width + body_height*body_height)}" />
+        <xacro:property name="iyy" value="${(mass/12) * (body_length*body_length + body_height*body_height)}" />
+        <xacro:property name="izz" value="${(mass/12) * (body_length*body_length + body_width*body_width)}" />
+
+        <link name="${prefix}base_link">
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <geometry>
+                    <box size="${body_length} ${body_width} ${body_height}"/>
+                </geometry>
+                <material name="${material_name}">
+                    <color rgba="${material_color}"/>
+                </material>
+            </visual>
+
+            <xacro:if value="${enable_collision}">
+                <collision>
+                    <origin xyz="0 0 0" rpy="0 0 0"/>
+                    <geometry>
+                        <box size="${body_length} ${body_width} ${body_height}"/>
+                    </geometry>
+                </collision>
+            </xacro:if>
+
+            <inertial>
+                <mass value="${mass}"/>
+                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <inertia ixx="${ixx}" ixy="0.0" ixz="0.0"
+                         iyy="${iyy}" iyz="0.0" izz="${izz}"/>
+            </inertial>
+        </link>
+
+    </xacro:macro>
+</robot>

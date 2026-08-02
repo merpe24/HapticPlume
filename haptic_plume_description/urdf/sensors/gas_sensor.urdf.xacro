@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:macro name="gas_sensor" params="
+    prefix:=''
+    parent:='base_link'
+    frame_id:='gas_sensor_link'
+    xyz_offset:='0 0 0'
+    rpy_offset:='0 0 0'
+    ">
+
+        <!-- Massless frame: This is a sample point, not a physical body-->
+        <link name="${prefix}${frame_id}"/>
+
+
+        <!-- 
+         DELIBERATELY COINCIDENT WITH base_link (zero offset).
+        gas_field_server (B5) samples concentration at the /hp/odom position,
+        which is the base_link pose. A non-zero offset here would sample off
+        the source plane (frames.md 5) and invalidate the Phase A baseline.
+        If this ever becomes non-zero, gas_field_server MUST transform first.
+         -->
+        <joint name="${prefix}${frame_id}_joint" type="fixed">
+            <parent link="${prefix}${parent}"/>
+            <child link="${prefix}${frame_id}"/>
+            <origin xyz="${xyz_offset}" rpy="${rpy_offset}"/>
+        </joint>
+    </xacro:macro>
+
+</robot>
