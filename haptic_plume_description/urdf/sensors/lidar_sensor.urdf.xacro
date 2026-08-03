@@ -2,24 +2,31 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:property name="M_PI" value="3.1415926535897931" />
 
+  <!--
+    Measure lidar_width, height, and mass to reflect real lidar
+
+    mesh_xyz_offset places the link origin on the lidar's spin axis with the mounting
+    foot at z = 0, because the vendor CAD datum is not centred on the body. Derived
+    from the same bounding box; re-derive it if the mesh is ever replaced.
+  -->
   <xacro:macro name="lidar_sensor" params="
     prefix:=''
     parent:='base_link'
     frame_id:='lidar_link'
-    mesh_file:='file://$(find yahboom_rosmaster_description)/meshes/rplidar/rplidar_s2.stl'
+    mesh_file:='file://$(find haptic_plume_description)/meshes/L2_unitree/L2_model.stl'
     xyz_offset:='0 0 0.0825'
     rpy_offset:='0 0 0'
-    mesh_xyz_offset:='0 0 0'
-    mesh_rpy_offset:='${-M_PI/2} 0 0'
+    mesh_xyz_offset:='-0.007729 -0.014666 0.006670'
+    mesh_rpy_offset:='0 0 0'
     mesh_scale:='0.001 0.001 0.001'
     collision_xyz_offset:='0 0 0'
     collision_rpy_offset:='0 0 0'
     inertial_xyz_offset:='0 0 0'
     inertial_rpy_offset:='0 0 0'
-    lidar_width:=0.077
-    lidar_height:=0.0398
-    mass:=0.185
-    material_name:='rplidar_black'
+    lidar_width:=0.075
+    lidar_height:=0.0635
+    mass:=0.24
+    material_name:='lidar_black'
     material_color:='0.1 0.1 0.1 1'
     gazebo_material_ambient:='0.1 0.1 0.1 1'
     gazebo_material_diffuse:='0.1 0.1 0.1 1'
@@ -32,6 +39,9 @@
     max_angle:='3.14159'
     min_range:='0.20'
     max_range:='30.0'
+    vertical_samples:='16'
+    min_vertical_angle:='-0.7854'
+    max_vertical_angle:='0.7854'
     range_resolution:='0.013'
     topic_name:='scan'
     always_on:=true

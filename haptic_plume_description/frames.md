@@ -19,7 +19,7 @@ map
  └── odom                        (static identity)
       └── base_link
            ├── gas_sensor_link
-           ├── laser_frame
+           ├── lidar_link
            ├── prop_front_left_link
            ├── prop_front_right_link
            ├── prop_back_left_link
@@ -34,11 +34,11 @@ namespacing it would force a `/tf` remap in every consumer, RViz and `tf2_tools`
 
 | Frame | Meaning | Published by |
 |---|---|---|
-| `map` | Scenario/world frame. Fixed. All Phase A math lives here. | static transform in the launch file |
-| `odom` | Odometry origin. Identity to `map` — a kinematic drone has zero drift. | static transform in the launch file |
-| `base_link` | Drone body origin, at the geometric centre of the airframe. | `drone_kinematics_node` (B3) |
+| `map` | Scenario/world frame. Fixed. All Phase A math lives here. | `static_transform_publisher` in `haptic_plume_drone/launch/drone.launch.py` |
+| `odom` | Odometry origin. Identity to `map` — a kinematic drone has zero drift, and `drone_kinematics_node` *is* ground truth, so there is nothing to correct. | same launch file (identity, no arguments) |
+| `base_link` | Drone body origin, at the geometric centre of the airframe. Yaw is cosmetic — see §6.3. | `drone_kinematics_node` (B3) |
 | `gas_sensor_link` | Point at which concentration is sampled. Coincident with `base_link` — see §5. | `robot_state_publisher` (B2) |
-| `laser_frame` | 3D lidar (Unitree). **Description-only** — nothing subscribes; it exists for airframe fidelity and the Phase F hardware path. Its gz sensor is off by default (`enable_gz_sensor:=false`) to protect the RTF budget. | `robot_state_publisher` (B2) |
+| `lidar_link` | 3D lidar (Unitree). **Description-only** — nothing subscribes; it exists for airframe fidelity and the Phase F hardware path. Its gz sensor is off by default (`enable_gz_sensor:=false`) to protect the RTF budget. Origin sits on the spin axis with the mounting foot at its own `z = 0`; the vendor CAD datum is not centred on the body, so `mesh_xyz_offset` corrects for it. | `robot_state_publisher` (B2) |
 | `prop_*_link` | Four propellers, visual only, fixed joints (no `/joint_states`). | `robot_state_publisher` (B2) |
 | `camera_link` | FPV camera body frame. | `robot_state_publisher` (B2) |
 | `camera_optical_frame` | Optical frame for the image. | `robot_state_publisher` (B2) |
@@ -160,6 +160,46 @@ World semantics, per the locked decision in `CLAUDE.md`:
 |---|---|
 | Planar velocity command, gravity wells, PRF repulsion | horizontal (world x, y) |
 | Heaviness ∝ concentration | vertical |
+
+### 6.1 `/hp/cmd_vel` is a WORLD-frame velocity (decided B3, 2026-08-04)
+
+`geometry_msgs/TwistStamped` conventionally carries a **body-frame** velocity. **Ours does
+not.** `/hp/cmd_vel` is interpreted in the `odom` frame, and publishers should stamp it
+`odom`.
+
+Reason: the force allocation above is defined in world semantics, and the Falcon is a
+3-DOF device with **no yaw axis** — the operator cannot rotate the body, so a body-frame
+command would be unusable. `drone_kinematics_node` logs a one-shot `RCLCPP_WARN` if it
+receives a twist stamped `base_link`, so the convention is self-enforcing rather than
+merely documented.
+
+### 6.2 `/hp/odom` twist is also WORLD-frame — a deliberate deviation
+
+`nav_msgs/Odometry` documents its `twist` as being expressed in `child_frame_id`, i.e.
+the body frame. `drone_kinematics_node` publishes it in the **world** frame instead.
+
+Reason: the drone's yaw is *synthesised* from the velocity direction (§6.3), so rotating
+the velocity into the body frame would collapse it to approximately `(|v|, 0, 0)` — the
+same scalar twice, expressed relative to a heading that exists only to aim a camera. The
+world-frame twist carries strictly more information and matches how every consumer in
+this system thinks.
+
+> **Consumers must NOT rotate `/hp/odom.twist` into the world frame — it is already
+> there.** In particular Phase C's PRF look-ahead `d_ahead = |v|·t_ahead` uses it as-is.
+
+Disclose this in the paper alongside the other deviations listed in `CLAUDE.md`.
+
+### 6.3 Yaw is cosmetic
+
+`base_link`'s yaw follows the horizontal velocity direction (held below
+`yaw_speed_threshold` so hover does not spin, slew-limited by `yaw_rate_limit`). Roll and
+pitch are always zero — the kinematic model has no attitude dynamics.
+
+It exists **only so the FPV camera points where the drone is flying**, which matters
+because the camera is the visual channel of the experiment and is never condition-gated
+(D6). Nothing in the gas, estimation, or plume chain reads orientation: `gas_sensor_link`
+is coincident with `base_link` and the Gaussian plume is isotropic about its axis. Do not
+build anything load-bearing on this heading.
 
 ---
 

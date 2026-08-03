@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-    <!-- Change arm_offset, radius, mass to reflect real drone -->
+    <!-- Measure arm_offset, radius, mass to reflect real drone -->
     <xacro:macro name="drone_prop" params="
     prefix:=''
     parent:='base_link'

@@ -2,9 +2,12 @@
 """
 Launch Rviz visualization for HapticPlume drone.
 
-This launch file setup the complete visualization environment for the drone,
-including robot state publisher and Rviz2.
-It handles loading and processing of URDF/XACRO files and controller configurations.
+This launch file sets up the visualization environment for the drone: it expands the
+xacro, hands the result to robot_state_publisher so the TF tree is published, and
+optionally starts RViz2 on the packaged config.
+
+No node here moves the drone. Until B3 brings up drone_kinematics_node there is no
+odom -> base_link transform, so the RViz config uses base_link as its fixed frame.
 
 :author: premmm
 :date: 1 Aug, 2026
@@ -18,13 +21,17 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
-def generate_launch_description():
-    """Generate the launch description
-    
-    Returns:
-        LaunchDescription: Complete launch description
-    """
 
+def generate_launch_description():
+    """
+    Generate the launch description.
+
+    Returns
+    -------
+    LaunchDescription
+        Every declared argument, plus robot_state_publisher and the optional RViz node.
+
+    """
     # 1. Constants for paths to different files and folders
     package_name_description = 'haptic_plume_description'
     default_urdf_model_path = PathJoinSubstitution(
@@ -34,14 +41,12 @@ def generate_launch_description():
         [FindPackageShare(package_name_description), 'rviz', 'haptic_plume_description.rviz']
     )
 
-
     # 2. Launch configuration variables (alphabetical)
     prefix = LaunchConfiguration('prefix')
     rviz_config_file = LaunchConfiguration('rviz_config_file')
     urdf_model = LaunchConfiguration('urdf_model')
     use_gazebo = LaunchConfiguration('use_gazebo')
     use_rviz = LaunchConfiguration('use_rviz')
-
 
     # 3. Declare the launch arguments
     declare_prefix_cmd = DeclareLaunchArgument(
@@ -76,9 +81,8 @@ def generate_launch_description():
         description='Whether to start RViz'
     )
 
-
     # 4. Nodes and includes
-    # Publish the drone's TF tree form the expanded xacro
+    # Publish the drone's TF tree from the expanded xacro
     start_robot_state_publisher_cmd = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -104,8 +108,7 @@ def generate_launch_description():
         arguments=['-d', rviz_config_file]
     )
 
-
-    #5. Create the launch description and populate
+    # 5. Create the launch description and populate
     ld = LaunchDescription()
 
     # Declare the launch options
@@ -115,7 +118,7 @@ def generate_launch_description():
     ld.add_action(declare_use_gazebo_cmd)
     ld.add_action(declare_use_rviz_cmd)
 
-    # Add any acitons
+    # Add the actions
     ld.add_action(start_robot_state_publisher_cmd)
     ld.add_action(start_rviz_cmd)
 
