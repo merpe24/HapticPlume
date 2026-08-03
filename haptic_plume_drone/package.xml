@@ -1,27 +1,30 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>haptic_plume</name>
+  <name>haptic_plume_drone</name>
   <version>0.0.0</version>
-  <description>HapticPlume robots (metapackage)</description>
+  <description>TODO: Package description</description>
   <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-  
-  <exec_depend>haptic_plume_bringup</exec_depend>
-  <exec_depend>haptic_plume_core</exec_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>haptic_plume_interfaces</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+
   <exec_depend>haptic_plume_description</exec_depend>
-  <exec_depend>haptic_plume_drone</exec_depend>
-  <exec_depend>haptic_plume_estimation</exec_depend>
-  <exec_depend>haptic_plume_experiment</exec_depend>
-  <exec_depend>haptic_plume_gas_sim</exec_depend>
-  <exec_depend>haptic_plume_gazebo</exec_depend>
-  <exec_depend>haptic_plume_interfaces</exec_depend>
-  <exec_depend>haptic_plume_system_tests</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

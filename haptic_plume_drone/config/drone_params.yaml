@@ -1,0 +1,47 @@
+# Parameters for drone_kinematics_node (haptic_plume_drone).
+#
+# obstacles_file is deliberately NOT here: it is an absolute path, and the launch
+# file resolves it through FindPackageShare so nothing hardcodes a workspace
+# location. Everything else is a plain value and belongs in version control.
+
+drone_kinematics:
+  ros__parameters:
+
+    # --- Timing -------------------------------------------------------------
+    update_rate: 100.0          # [Hz] tick and publish rate
+
+    # --- Motion limits ------------------------------------------------------
+    max_speed: 1.5              # [m/s] cap on the command; the Phase A agent flew 1.0
+    max_accel: 3.0              # [m/s^2] acceleration limit
+    cmd_timeout: 0.3            # [s] no cmd_vel for this long -> command zero
+
+    # --- Altitude policy ----------------------------------------------------
+    # frames.md 5: changing fixed_altitude silently invalidates the Phase A baseline,
+    # because the validated suite flew at exactly source height for every trial.
+    fixed_altitude_enabled: true
+    fixed_altitude: 1.0         # [m]
+
+    # --- Collision geometry -------------------------------------------------
+    drone_radius: 0.377         # [m] Holybro X500 V2: 250 mm arm + 127 mm propeller
+    collision_margin: 0.05      # [m] standoff kept beyond bare contact
+    min_altitude: 0.15          # [m] floor clearance above ground_z
+    clamp_max_passes: 4         # main_run and riser share an endpoint; 4 proven by gtest
+
+    # --- Room bounds --------------------------------------------------------
+    # The 20 x 20 m SEARCH_AREA is the industrial hall, so its walls come free from
+    # this clamp and add nothing to obstacles.yaml.
+    search_area_min: [0.0, 0.0]      # [m]
+    search_area_max: [20.0, 20.0]    # [m]
+
+    # --- Spawn and reset ----------------------------------------------------
+    start_position: [1.0, 1.0, 1.0]  # [m] map frame
+
+    # --- Yaw ----------------------------------------------------------------
+    # Cosmetic only: it aims the FPV camera. No gas or estimation code reads it.
+    yaw_follows_velocity: true
+    yaw_speed_threshold: 0.05   # [m/s] below this the yaw is held, so hover does not spin
+    yaw_rate_limit: 2.0         # [rad/s]
+
+    # --- Frames -------------------------------------------------------------
+    odom_frame: "odom"
+    base_frame: "base_link"
