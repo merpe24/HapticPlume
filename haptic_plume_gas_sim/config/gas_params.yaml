@@ -1,0 +1,37 @@
+# Parameters for gas_field_server (haptic_plume_gas_sim).
+#
+# The sensor constants are NOT free knobs: they are the values the Phase A
+# suite was validated with (EvalConfig, eval_estimator.py). Changing one
+# invalidates the 73%-correct-count / 2-3%-error baseline the paper reports.
+
+gas_field_server:
+  ros__parameters:
+
+    # --- Timing -------------------------------------------------------------
+    # The lag is constructed with dt = 1 / publish_rate, and the Phase C
+    # compensator must run at THIS rate, not the 5 Hz of the particle filter.
+    publish_rate: 20.0          # [Hz] sample and publish rate
+
+    # --- Startup scenario ---------------------------------------------------
+    # Overridden at runtime by /hp/set_scenario; these are only the boot world.
+    n_sources: 1                # number of leaks, >= 1
+    seed: 42                    # same seed -> same world AND same noise stream
+
+    # --- Sensor chain (Phase A validated) -----------------------------------
+    tau_rise: 3.0               # [s] rise time constant, paper Eq. (24)
+    tau_rec: 8.0                # [s] recovery constant; real MOX sensors recover slowly
+    sigma_noise: 2.0e-3         # [kg/m^3] additive white electronics noise
+    sigma_fluct: 0.2            # [-] lognormal turbulence intermittency
+
+    # --- Frames -------------------------------------------------------------
+    map_frame: "map"
+
+    # --- RViz field markers (GROUND TRUTH -- debug only, gated by D6) --------
+    # marker_c0 and marker_alpha_gain implement decision D5's log law with
+    # globally fixed constants. Per-scenario normalisation is forbidden.
+    marker_altitude: 1.0        # [m] slice height; matches frames.md 5
+    marker_grid_step: 0.25      # [m] cube size and grid pitch
+    marker_c0: 2.0e-3           # [kg/m^3] log-law reference, set at the noise floor
+    marker_alpha_gain: 0.25     # [-] alpha saturates near c = 0.1 kg/m^3
+    marker_alpha_min: 0.02      # [-] below this a cube is dropped, to keep RViz light
+    marker_airflow_length: 3.0  # [m] drawn length of each airflow arrow
