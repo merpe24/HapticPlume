@@ -44,7 +44,7 @@ add_executable(drone_kinematics_node
   src/drone_kinematics_node.cpp
 )
 
-# Specify dependenices for the target
+# Specify dependenices
 target_link_libraries(drone_kinematics_node obstacle_field)
 
 ament_target_dependencies(drone_kinematics_node

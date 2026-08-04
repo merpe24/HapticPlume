@@ -1,0 +1,48 @@
+# Axis map for gamepad teleop (haptic_plume_teleop/teleop_mapper_node).
+#
+# Measured on the actual controller, 2026-08-04 -- do not assume these indices
+# transfer to another device. Read them with `jstest /dev/input/js0` and edit
+# here; no index is ever hardcoded in the node. The same schema describes the
+# Novint Falcon in Phase D, where device-y is vertical and device-z points at
+# the operator.
+#
+# Mapping decision: stick UP = world +y, stick RIGHT = world +x. That is
+# screen-aligned in RViz's TopDownOrtho view, so what you see is what the stick
+# does. /hp/cmd_vel is WORLD-frame (frames.md 6.1) -- there is no body-frame
+# rotation and no yaw command; the drone derives yaw from its own velocity.
+
+teleop_mapper:
+  ros__parameters:
+
+    # --- Timing and safety --------------------------------------------------
+    publish_rate: 100.0     # [Hz] fixed; matches drone_kinematics_node's tick
+    joy_timeout: 0.5        # [s] no /joy for this long -> command zero
+    frame_id: "map"         # world frame; the node never rotates the command
+
+    # Button 0 is the momentary shoulder button. It MUST be a hold-type button:
+    # the latching slider (button 1) would stay engaged after release and defeat
+    # the deadman entirely. Button 1 is reserved for the O3 "leak found"
+    # declaration in Phase E.
+    deadman_button: 0
+
+    # --- Axis map -----------------------------------------------------------
+    # Invert both axis x and y
+    axes:
+      linear_x:             # world +x, right on screen in the top-down view
+        index: 0            # right stick, horizontal
+        scale: 1.0          # [m/s] at full deflection; Phase A flew 1.0, drone caps at 1.5
+        deadband: 0.05      # [-] re-spanned by the node, so no jump at the edge
+        invert: true
+
+      linear_y:             # world +y, up on screen in the top-down view
+        index: 1            # right stick, vertical
+        scale: 1.0          # [m/s]
+        deadband: 0.05
+        invert: true
+
+      linear_z:             # world +z, altitude
+        index: 2            # left stick, vertical
+        scale: 0.5          # [m/s] deliberately slower than horizontal
+        deadband: 0.05
+        invert: true
+        # Haven't tested axis Z yet, sign invert is inferred from testing x and y axes
