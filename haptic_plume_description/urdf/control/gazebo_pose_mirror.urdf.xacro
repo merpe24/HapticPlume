@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <!--
+      Gazebo-only: hand the drone's pose to the PoseMirror gz-sim system plugin.
+
+      D1 makes drone_kinematics_node the motion authority. Gazebo renders and hosts
+      the FPV camera but never integrates the drone. The plugin lives in
+      haptic_plume_gazebo and teleports this model onto /hp/odom every sim step.
+
+      Gravity is not handled here or in the plugin. pipeline.world sets
+      <gravity>0 0 0</gravity> at world level and documents why - the URDF
+      <gazebo reference><gravity>false</gravity> route reaches the converted SDF but
+      gz ignores it through the `create -topic /robot_description` spawn path
+      (verified 2026-08-05).
+    -->
+    <xacro:macro name="gazebo_pose_mirror" params="
+    use_gazebo:=false
+    topic_name:='/hp/odom'
+    plugin_filename:='pose_mirror'
+    plugin_name:='haptic_plume::PoseMirror'
+    ">
+
+        <xacro:if value="${use_gazebo}">
+
+            <gazebo>
+                <plugin filename="${plugin_filename}" name="${plugin_name}">
+                    <topic>${topic_name}</topic>
+                </plugin>
+            </gazebo>
+        </xacro:if>
+
+    </xacro:macro>
+
+</robot>

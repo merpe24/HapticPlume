@@ -1,0 +1,28 @@
+# ROS <-> Gazebo bridge for the HapticPlume simulation.
+#
+# D3: there is deliberately NO /clock entry. This project runs on wall clock with
+# use_sim_time:=false everywhere. Bridging /clock would hand time authority to
+# Gazebo, and yahboom's bridge config does exactly that - do not copy it wholesale.
+#
+# The FPV image itself is NOT bridged here. ros_gz_image's image_bridge carries it,
+# which is the lower-latency path for image data; only camera_info comes through
+# the parameter bridge.
+
+# Drone pose mirror configuration
+# D1: drone_kinematics_node is the motion authority and Gazebo only renders. This is
+# the single ROS_TO_GZ entry in the system: the PoseMirror plugin subscribes to the
+# gz side and teleports the model onto this pose every simulation step.
+- ros_topic_name: "/hp/odom"
+  gz_topic_name: "/hp/odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: ROS_TO_GZ
+  lazy: false               # always connected; the pose feed must not wait for demand
+
+# FPV camera configuration
+- ros_topic_name: "/hp/fpv/camera_info"
+  gz_topic_name: "/fpv/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+  lazy: true                # connect only when a subscriber exists (saves resources)

@@ -22,7 +22,7 @@ add_executable(teleop_mapper_node
   src/teleop_mapper_node.cpp
 )
 
-# Specify dependencies
+# Specify dependencies for the targets
 ament_target_dependencies(teleop_mapper_node
   rclcpp
   geometry_msgs

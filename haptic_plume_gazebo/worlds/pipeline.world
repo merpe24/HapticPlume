@@ -1,0 +1,192 @@
+<?xml version="1.0" ?>
+<!--
+  The 20 x 20 m industrial hall - the VALIDATED EXPERIMENT WORLD.
+
+  Its extent is SEARCH_AREA from haptic_plume_core/scenario.py:33 and frames.md 2.
+  Phase A's 73%-correct-count / 2-3%-localization-error baseline was measured in this
+  box with ~18 m of downwind plume run. Do not resize it. The 6 x 8 m lab replica is
+  a separate file, lab.world, and is NOT an experiment world.
+
+  The pipe poses and radii MUST match haptic_plume_description/config/obstacles.yaml.
+  test/test_world_matches_obstacles.py asserts it - see frames.md 8.
+
+  There is deliberately no <collision> geometry in this world. D1 makes the analytic
+  capsule field in libobstacle_field.so the collision authority and Gazebo a renderer
+  only; with gravity disabled on the drone (see gazebo_pose_mirror.urdf.xacro) the
+  physics system then has nothing to solve, which is what holds RTF at 1.0 for D3.
+
+  author: premmm
+  date: August 5, 2026
+-->
+<sdf version="1.10">
+  <world name="pipeline">
+
+    <!-- Wall clock, D3. 250 Hz oversamples the 100 Hz pose stream from PoseMirror;
+         the gz default of 1 kHz would be pure waste with no dynamics to resolve. -->
+    <physics name="default_physics" type="ignored">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Everything except the drone is static, and the drone is driven by pose from PoseMirror
+         The gravity will just break the SetWorldPoseCmd -->
+    <gravity>0 0 0</gravity>
+
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <!-- user-commands provides the /world/pipeline/create service that ros_gz_sim's
+         `create` executable calls to spawn the drone -->
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <!-- Hosts the FPV camera declared in fpv_camera.urdf.xacro -->
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <scene>
+      <ambient>0.6 0.6 0.6 1</ambient>
+      <background>0.75 0.78 0.82 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>10 10 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.4 0.3 -0.9</direction>
+    </light>
+
+    <!-- Hall floor. Top surface sits at z = 0, which is ground_z in obstacles.yaml -->
+    <model name="floor">
+      <static>true</static>
+      <pose>10 10 -0.05 0 0 0</pose>
+      <link name="floor_link">
+        <visual name="floor_visual">
+          <geometry>
+            <box><size>20 20 0.1</size></box>
+          </geometry>
+          <material>
+            <ambient>0.35 0.35 0.37 1</ambient>
+            <diffuse>0.40 0.40 0.42 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Hall walls. Visual only: the kinematics node already enforces these bounds
+         through search_area_min / search_area_max, so they exist to give the FPV
+         camera something to orient against. Each inner face is exactly on the
+         SEARCH_AREA boundary. -->
+    <model name="wall_south">
+      <static>true</static>
+      <pose>10 -0.05 1.5 0 0 0</pose>
+      <link name="wall_link">
+        <visual name="wall_visual">
+          <geometry>
+            <box><size>20.2 0.1 3.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.68 0.68 0.65 1</ambient>
+            <diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_north">
+      <static>true</static>
+      <pose>10 20.05 1.5 0 0 0</pose>
+      <link name="wall_link">
+        <visual name="wall_visual">
+          <geometry>
+            <box><size>20.2 0.1 3.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.68 0.68 0.65 1</ambient>
+            <diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-0.05 10 1.5 0 0 0</pose>
+      <link name="wall_link">
+        <visual name="wall_visual">
+          <geometry>
+            <box><size>0.1 20.2 3.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.68 0.68 0.65 1</ambient>
+            <diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_east">
+      <static>true</static>
+      <pose>20.05 10 1.5 0 0 0</pose>
+      <link name="wall_link">
+        <visual name="wall_visual">
+          <geometry>
+            <box><size>0.1 20.2 3.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.68 0.68 0.65 1</ambient>
+            <diffuse>0.75 0.75 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- PIPELINE. Mirrors obstacles.yaml exactly.
+         main_run: p0 (10, 5, 1) -> p1 (10, 15, 1), radius 0.30
+         The analytic obstacle is a CAPSULE, so its collision volume extends 0.30 m
+         past each end of the cylinder drawn here. The drawn length is |p1 - p0|. -->
+    <model name="main_run">
+      <static>true</static>
+      <pose>10 10 1 1.5707963267948966 0 0</pose>
+      <link name="pipe_link">
+        <visual name="pipe_visual">
+          <geometry>
+            <cylinder>
+              <radius>0.30</radius>
+              <length>10.0</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.70 0.58 0.10 1</ambient>
+            <diffuse>0.85 0.72 0.15 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- riser: p0 (10, 5, 0) -> p1 (10, 5, 1), radius 0.30 -->
+    <model name="riser">
+      <static>true</static>
+      <pose>10 5 0.5 0 0 0</pose>
+      <link name="pipe_link">
+        <visual name="pipe_visual">
+          <geometry>
+            <cylinder>
+              <radius>0.30</radius>
+              <length>1.0</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.70 0.58 0.10 1</ambient>
+            <diffuse>0.85 0.72 0.15 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

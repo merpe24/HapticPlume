@@ -10,6 +10,7 @@
     <xacro:include filename="$(find haptic_plume_description)/urdf/sensors/gas_sensor.urdf.xacro"/>
     <xacro:include filename="$(find haptic_plume_description)/urdf/sensors/fpv_camera.urdf.xacro"/>
     <xacro:include filename="$(find haptic_plume_description)/urdf/sensors/lidar_sensor.urdf.xacro"/>
+    <xacro:include filename="$(find haptic_plume_description)/urdf/control/gazebo_pose_mirror.urdf.xacro"/>
 
     <xacro:drone_base prefix="$(arg prefix)"/>
 
@@ -21,5 +22,6 @@
     <xacro:gas_sensor prefix="$(arg prefix)" parent="base_link"/>
     <xacro:fpv_camera prefix="$(arg prefix)" parent="base_link"  xyz_offset="0.105 0 0" use_gazebo="$(arg use_gazebo)"/>
     <xacro:lidar_sensor prefix="$(arg prefix)" parent="base_link" xyz_offset="0 0 0.09" use_gazebo="$(arg use_gazebo)"/>
+    <xacro:gazebo_pose_mirror use_gazebo="$(arg use_gazebo)" topic_name="/hp/odom"/>
 
 </robot>
