@@ -84,6 +84,10 @@ PAPER_PROCESS_SIGMA = np.array([
 # at 0.05 and below it commits early and consumes the wrong location.
 PROJECT_Q = 0.1
 
+# Neighbourhood radius of the maximum-neighbours estimate, from Neumann et al.
+MNE_RADIUS = 0.5
+MNE_REFINE_PASSES = 3
+
 
 @dataclass
 class PlumeFilterConfig:
@@ -247,6 +251,77 @@ class PlumeParticleFilter:
         theta = self.particles[:, 3]
         estimate[3] = np.arctan2(self.weights @ np.sin(theta),
                                  self.weights @ np.cos(theta))
+        return estimate
+
+    @property
+    def mne_position(self):
+        """
+        Maximum-neighbours estimate of the source position — the haptic target.
+
+        Neumann et al. found the weighted mean is dragged around by outliers,
+        and that resampling manufactures those outliers every step. This
+        project renders a FORCE from the estimate, so that wander reaches the
+        operator's hand directly (risk R5); the centre of the densest clump
+        does not move when the tails are reshuffled.
+
+        Neumann searches for the particle with the most neighbours within
+        MNE_RADIUS, which is O(N^2) and does not fit a 5 Hz budget at N=3500.
+        Here an MNE_RADIUS grid seeds the densest region in O(N), and a few
+        mean-shift iterations with a Gaussian kernel of the same width refine
+        it onto the local mode.
+
+        The mean-shift refinement is NOT optional. Returning the grid cell's
+        centroid directly was measured at 0.11 m of step-to-step wander
+        against 0.003 m for mmse: when the clump straddles a cell boundary the
+        heaviest cell flips and the answer jumps a whole cell. Since the point
+        of this estimator is to stop the rendered force from wandering (R5),
+        that made it worse than what it replaced. Mean-shift is continuous in
+        the particle positions, so there is no boundary to jump across.
+
+        Meaningless before the belief has clustered — the prior is uniform over
+        the whole domain, so the heaviest cell is noise. Read it only once the
+        status is CONVERGING.
+
+        mmse stays the estimate that feeds consume and every logged metric:
+        it carries all eight parameters (consume needs Q and the spread terms)
+        and it is what the validated Phase A numbers were produced with.
+
+        :return: (3,) source position estimate (x_s, y_s, z_s) [m]
+        :rtype: numpy.ndarray
+        """
+        xy = self.particles[:, 0:2]
+        lo = self.config.bounds[0:2, 0]
+        n_y = int(np.ceil((self.config.bounds[1, 1]
+                           - self.config.bounds[1, 0]) / MNE_RADIUS)) + 1
+        # _propagate clips to bounds, so xy >= lo and these keys stay
+        # non-negative, which is what makes np.bincount safe here.
+        cells = np.floor((xy - lo) / MNE_RADIUS).astype(np.int64)
+        keys = cells[:, 0] * n_y + cells[:, 1]
+
+        peak = int(np.argmax(np.bincount(keys, weights=self.weights)))
+        peak_cell = np.array([peak // n_y, peak % n_y])
+
+        near = np.all(np.abs(cells - peak_cell) <= 1, axis=1)
+        w = self.weights[near]
+        total = float(w.sum())
+        if total <= 0.0:
+            return self.mmse[0:3]
+        centre = (w @ xy[near]) / total
+
+        # Mean-shift onto the local mode. Three passes is enough: the seed is
+        # already within one cell of the mode, and the kernel is that wide.
+        for _ in range(MNE_REFINE_PASSES):
+            offset = xy - centre
+            kernel = self.weights * np.exp(
+                -0.5 * np.sum(offset * offset, axis=1) / MNE_RADIUS ** 2)
+            mass = float(kernel.sum())
+            if mass <= 0.0:
+                break
+            centre = (kernel @ xy) / mass
+
+        estimate = np.empty(3)
+        estimate[0:2] = centre
+        estimate[2] = float(kernel @ self.particles[:, 2]) / mass
         return estimate
 
     @property

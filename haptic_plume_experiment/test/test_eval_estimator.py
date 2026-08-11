@@ -22,6 +22,7 @@ from haptic_plume_estimation.sensor_compensation import (
 )
 
 from haptic_plume_experiment.eval_estimator import (
+    _cross_axis_spread,
     EvalConfig,
     mean_pair_distance,
     PLANNERS,
@@ -75,6 +76,55 @@ def test_lag_round_trip_across_the_two_packages():
         low_pass = (GAMMA * DT * c_true + low_pass) / (1.0 + GAMMA * DT)
         assert compensator.update(sensor.measure(c_true)) == pytest.approx(
             low_pass, rel=1e-9, abs=1e-15)
+
+
+def test_cross_axis_spread_is_measured_perpendicular_to_the_wind():
+    """
+    A path straight down the wind axis has zero cross-axis spread.
+
+    The risk R1 gate rests entirely on this projection being on the right
+    axis. Getting it 90 degrees wrong would invert the gate — it would block
+    exactly the informative paths and pass the degenerate ones — and no other
+    test in the suite would notice. Hand-computed on theta = 0, where the
+    wind runs along +x, so cross-axis is plain y.
+    """
+    along_wind = [np.array([float(x), 5.0, 1.0]) for x in range(10)]
+    assert _cross_axis_spread(along_wind, 0.0) == pytest.approx(0.0)
+
+    # The same points read against a wind blowing along +y are pure spread.
+    assert _cross_axis_spread(along_wind, np.pi / 2.0) == pytest.approx(
+        float(np.std(np.arange(10.0))))
+
+    crosswind = [np.array([3.0, float(y), 1.0]) for y in range(10)]
+    assert _cross_axis_spread(crosswind, 0.0) == pytest.approx(
+        float(np.std(np.arange(10.0))))
+
+
+def test_cross_axis_spread_handles_a_degenerate_window():
+    """Fewer than two samples is 0.0, not a NaN reaching the gate."""
+    assert _cross_axis_spread([], 0.0) == 0.0
+    assert _cross_axis_spread([np.array([1.0, 1.0, 1.0])], 0.0) == 0.0
+
+
+def test_path_window_is_scoped_to_the_last_filter_reset():
+    """
+    Each consume reports flying done since the previous one, not since launch.
+
+    A live gate cannot judge source two on the flying done for source one, so
+    run_trial clears its position window whenever the filter resets. Without
+    that clear the recorded spreads rise monotonically, because the window
+    only ever grows. This is the scoping, not a claim that the metric gates
+    anything — it does not, see format_observability_table.
+    """
+    config = small_config(max_steps=900)
+    result = run_trial(random_scenario(2, 4), config, seed=4,
+                       planner='infotaxis')
+    spreads = result.path_cross_at_consume
+    if spreads.size < 3:
+        pytest.skip('too few consumes in this short trial to judge scoping')
+    # A cumulative window is non-decreasing by construction; a scoped one is
+    # not. One decrease is enough to prove the window was cleared.
+    assert np.any(np.diff(spreads) < 0.0)
 
 
 def test_mean_pair_distance_hand_values():

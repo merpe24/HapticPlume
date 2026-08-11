@@ -263,6 +263,78 @@ def test_mmse_theta_is_a_circular_mean():
     assert abs(pf.mmse[3]) == pytest.approx(np.pi, abs=1e-12)
 
 
+def test_mne_resists_outliers_that_drag_the_mean():
+    """
+    The maximum-neighbours estimate reports the clump, not the average.
+
+    Neumann et al.'s reason for preferring it, and this project renders a
+    FORCE from the point (risk R5): a weighted mean pulled off the leak by
+    resampling debris points the operator's hand at empty floor. 10% of the
+    ensemble scattered uniformly is enough to move mmse by ~0.4 m, which at a
+    5 m standoff is a ~5 degree bearing error.
+    """
+    pf = make_filter(n_particles=2000)
+    rng = np.random.default_rng(3)
+    n_clump = int(0.9 * pf.config.n_particles)
+    pf.particles[:n_clump, 0:2] = (np.array([6.0, 9.0])
+                                   + rng.normal(0.0, 0.25, (n_clump, 2)))
+    pf.particles[n_clump:, 0:2] = rng.uniform(
+        0.0, 20.0, (pf.config.n_particles - n_clump, 2))
+    pf.weights = np.full(pf.config.n_particles, 1.0 / pf.config.n_particles)
+
+    truth = np.array([6.0, 9.0])
+    mne_error = float(np.linalg.norm(pf.mne_position[0:2] - truth))
+    mmse_error = float(np.linalg.norm(pf.mmse[0:2] - truth))
+    assert mne_error < 0.1
+    assert mmse_error > 5.0 * mne_error
+
+
+def test_mne_does_not_jump_between_grid_cells():
+    """
+    Repeated resampling moves the reported point by centimetres, not cells.
+
+    The grid that seeds the search has MNE_RADIUS-wide cells. Without the
+    mean-shift refinement a clump sitting on a cell boundary flips the
+    heaviest cell and the estimate jumps a whole 0.5 m — measured at 0.11 m
+    of wander before the fix, against 0.003 m for mmse. That is a force pop,
+    which is the failure this estimator exists to avoid.
+    """
+    pf = make_filter(n_particles=2000)
+    rng = np.random.default_rng(11)
+    # Centre the clump exactly on a cell boundary, the worst case.
+    pf.particles[:, 0:2] = (np.array([6.0, 9.0])
+                            + rng.normal(0.0, 0.3,
+                                         (pf.config.n_particles, 2)))
+    pf.weights = np.full(pf.config.n_particles, 1.0 / pf.config.n_particles)
+
+    reported = []
+    for _ in range(30):
+        pf._systematic_resample()
+        pf._propagate()
+        reported.append(pf.mne_position[0:2].copy())
+    wander = np.std(np.asarray(reported), axis=0)
+    assert np.all(wander < 0.05)
+
+
+def test_mne_is_bit_reproducible():
+    """Two identically seeded filters report the same haptic target (D7)."""
+    pf_a, pf_b = make_filter(seed=7), make_filter(seed=7)
+    for _ in range(5):
+        pf_a.update(np.array([4.0, 4.0, 1.0]), 0.05)
+        pf_b.update(np.array([4.0, 4.0, 1.0]), 0.05)
+    np.testing.assert_array_equal(pf_a.mne_position, pf_b.mne_position)
+
+
+def test_mne_stays_inside_the_search_domain():
+    """A uniform prior still yields a position inside S, never a NaN."""
+    pf = make_filter()
+    estimate = pf.mne_position
+    assert estimate.shape == (3,)
+    assert np.all(np.isfinite(estimate))
+    assert np.all(estimate[0:2] >= PAPER_BOUNDS[0:2, 0])
+    assert np.all(estimate[0:2] <= PAPER_BOUNDS[0:2, 1])
+
+
 def test_configuration_is_validated():
     """Bad shapes and impossible values fail at construction, not mid-flight."""
     with pytest.raises(ValueError):

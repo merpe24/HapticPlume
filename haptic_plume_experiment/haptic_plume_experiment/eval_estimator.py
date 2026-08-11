@@ -120,6 +120,11 @@ class TrialResult:
     steps: int = 0
     consumed_positions: np.ndarray = field(
         default_factory=lambda: np.empty((0, 3)))
+    # Cross-axis path spread at each consume, kept raw rather than
+    # pre-averaged: the threshold that separates an informative path from a
+    # run down the plume axis is read off the distributions, not from a mean.
+    path_cross_at_consume: np.ndarray = field(
+        default_factory=lambda: np.empty(0))
 
     @property
     def correct_count(self):
@@ -162,8 +167,11 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
     n_diverged = 0
     path_length = 0.0
     last_consume_step = None
+    path_cross = []
+    visited = []
 
     for step in range(config.max_steps):
+        visited.append(position.copy())
         # --- sense: truth -> lagged, noisy measurement -> compensated ---
         c_true = float(field_truth.concentration(*position))
         z_ff = compensator.update(sensor.measure(c_true))
@@ -176,10 +184,16 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
         # --- consume: a tight enough belief becomes a localized source ---
         if (should_consume(pf.sigma_position_norm, config.sigma_c)
                 and len(consumed) < config.max_sources):
+            # Read before pf.reset() below, or this measures a fresh prior.
+            path_cross.append(_cross_axis_spread(visited, pf.mmse[3]))
             consumed.push(pf.mmse)
             consumed.merge(config.d_cluster)
             last_consume_step = step
             pf.reset()
+            # Scope the path window to this belief. Without the clear, source
+            # two onward is judged on flying done for source one, and the gate
+            # waves everything through. Mirrors pf.reset() exactly.
+            visited.clear()
 
         # --- plan and move: kinematic x_dot = v, paper Eq. (20) ---
         if step % config.plan_every == 0:
@@ -190,11 +204,11 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
         path_length += moved
 
     return _summarize(scenario, planner, seed, config, consumed, pf,
-                      n_diverged, path_length, last_consume_step)
+                      n_diverged, path_length, last_consume_step, path_cross)
 
 
 def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
-               path_length, last_consume_step):
+               path_length, last_consume_step, path_cross):
     """
     Turn the end state of a trial into a TrialResult.
 
@@ -207,6 +221,7 @@ def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
     :param n_diverged: number of updates that reported DIVERGED
     :param path_length: distance flown [m]
     :param last_consume_step: step index of the final consume, or None
+    :param path_cross: cross-axis path spreads recorded at each consume [m]
     :return: the assembled result
     :rtype: TrialResult
     """
@@ -222,6 +237,7 @@ def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
         path_length_m=path_length,
         steps=config.max_steps,
         consumed_positions=consumed.positions,
+        path_cross_at_consume=np.asarray(path_cross, dtype=float),
     )
     error = mean_pair_distance(scenario.source_positions, consumed.positions)
     if error is not None:
@@ -482,6 +498,87 @@ def format_study_table(results_by_planner):
     return '\n'.join(lines)
 
 
+def format_observability_table(results_by_planner):
+    """
+    Render the cross-axis path spread at consume, one row per planner.
+
+    INSTRUMENTATION ONLY — this is not a gate, and the numbers below are why.
+
+    It was built as the risk R1 gate: block the haptic well until the drone
+    has flown far enough sideways to the wind that the source position is
+    actually observable. Over a whole trial it looked decisive (infotaxis
+    4.99 m against downwind 1.29 m). Scoped correctly to the window since the
+    last filter reset -- which is the only scoping a live gate can use, since
+    source two must not be judged on flying done for source one -- the
+    separation inverts:
+
+        1 source : infotaxis p50 0.36 m, downwind p50 0.91 m
+        2 sources: infotaxis p50 0.53 m, downwind p50 1.38 m
+
+    The confound is consume rate. infotaxis consumes ~3.2 times per trial and
+    downwind ~1.1, so infotaxis windows are short and accumulate less spread.
+    The metric reads time-since-last-consume, not flight diversity, and the
+    whole-trial version was reading total path length. Kept because the
+    measurement is what exposed this, and the next candidate (normalize by
+    window length, or restrict to in-plume samples) needs the same plumbing.
+
+    :param results_by_planner: dict mapping planner name to TrialResult list
+    :return: the printable table
+    :rtype: str
+    """
+    lines = [
+        'planner     n cons   p10 m   p50 m   p90 m',
+        '----------  ------  ------  ------  ------',
+    ]
+    for name, results in results_by_planner.items():
+        cross = _stack([r.path_cross_at_consume for r in results])
+        if cross.size == 0:
+            lines.append(f'{name:<10}  {0:>6}  (never consumed)')
+            continue
+        p10, p50, p90 = np.percentile(cross, (10, 50, 90))
+        lines.append(
+            f'{name:<10}  {cross.size:>6}  {p10:>6.2f}  {p50:>6.2f}  '
+            f'{p90:>6.2f}')
+    return '\n'.join(lines)
+
+
+def _cross_axis_spread(positions, theta):
+    """
+    Measure the flown path's spread perpendicular to the believed wind axis.
+
+    A property of the TRAJECTORY, not of the belief. Candidate risk R1 gate;
+    it does not separate the paths once scoped correctly. See
+    format_observability_table for the measured numbers and CLAUDE.md for the
+    two negative results this and the belief-shape ratio produced.
+
+    Uses the BELIEVED theta, not the true one, because a live gate only ever
+    has the belief. Callers must clear the position window whenever the filter
+    resets, or source two onward is judged on flying done for source one.
+
+    :param positions: list of (3,) world positions since the last filter reset
+    :param theta: believed wind direction [rad]
+    :return: cross-axis spread of the path [m]
+    :rtype: float
+    """
+    if len(positions) < 2:
+        return 0.0
+    xy = np.asarray(positions, dtype=float)[:, 0:2]
+    across = np.array([-np.sin(theta), np.cos(theta)])
+    return float(np.std(xy @ across))
+
+
+def _stack(arrays):
+    """
+    Concatenate a list of 1-D arrays, tolerating an empty list.
+
+    :param arrays: list of 1-D numpy arrays
+    :return: the concatenation, or an empty array
+    :rtype: numpy.ndarray
+    """
+    arrays = [a for a in arrays if a.size]
+    return np.concatenate(arrays) if arrays else np.empty(0)
+
+
 def main(args=None):
     """Entry point: run the requested study and print its table."""
     parser = argparse.ArgumentParser(
@@ -525,6 +622,9 @@ def main(args=None):
         print('\nNon-informative path study (risk R1): same worlds, '
               'different trajectories')
         print(format_study_table(study))
+        print('\nObservability at consume (cross-axis path spread since the '
+              'last reset) — INSTRUMENTATION, not a working gate')
+        print(format_observability_table(study))
 
     return 0
 
