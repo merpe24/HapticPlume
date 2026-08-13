@@ -13,29 +13,26 @@
 #include <gz/common/Console.hh>
 #include <gz/msgs/Utility.hh>
 #include <gz/plugin/Register.hh>
+#include <gz/sim/components/Model.hh>
+#include <gz/sim/components/Name.hh>
 
 namespace haptic_plume
 {
 
 void PoseMirror::Configure(
-  const gz::sim::Entity & _entity,
+  const gz::sim::Entity & /*_entity*/,
   const std::shared_ptr<const sdf::Element> & _sdf,
-  gz::sim::EntityComponentManager & _ecm,
+  gz::sim::EntityComponentManager & /*_ecm*/,
   gz::sim::EventManager & /*_eventMgr*/)
 {
-  // Bind to the entity the plugin was attached to. Because the plugin is declared in
-  // the drone's URDF it always lands on the drone model, so there is no lookup by
-  // name and no "model has not spawned yet" race to handle.
-  this->model_ = gz::sim::Model(_entity);
-
-  if (!this->model_.Valid(_ecm)) {
-    gzerr << "PoseMirror must be attached to a model entity. Plugin disabled.\n";
-    return;
-  }
-
-  // Read the gz topic carrying the commanded pose
+  // _entity is the world. The drone does not exist yet, so binding happens lazily in
+  // PreUpdate — see the header for why this is a world plugin.
   if (_sdf->HasElement("topic")) {
     this->topic_ = _sdf->Get<std::string>("topic");
+  }
+
+  if (_sdf->HasElement("model_name")) {
+    this->model_name_ = _sdf->Get<std::string>("model_name");
   }
 
   // Subscribe. The callback runs on a gz-transport thread, never the sim thread.
@@ -45,7 +42,7 @@ void PoseMirror::Configure(
   }
 
   gzmsg << "PoseMirror mirroring [" << this->topic_ << "] onto model ["
-        << this->model_.Name(_ecm) << "]\n";
+        << this->model_name_ << "]\n";
 }
 
 void PoseMirror::PreUpdate(
@@ -59,7 +56,20 @@ void PoseMirror::PreUpdate(
   }
 
   if (!this->model_.Valid(_ecm)) {
-    return;
+    // The world loads before `create` spawns the drone, so this lookup cannot happen
+    // in Configure and must be retried each step. Re-binding also means a Phase E
+    // trial reset that respawns the model is handled for free.
+    const gz::sim::Entity entity = _ecm.EntityByComponents(
+      gz::sim::components::Name(this->model_name_),
+      gz::sim::components::Model());
+
+    if (entity == gz::sim::kNullEntity) {
+      return;
+    }
+
+    this->model_ = gz::sim::Model(entity);
+    gzmsg << "PoseMirror bound to model [" << this->model_name_
+          << "] entity [" << entity << "]\n";
   }
 
   gz::math::Pose3d pose;

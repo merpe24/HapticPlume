@@ -53,7 +53,6 @@ def generate_launch_description():
 
     ros_gz_bridge_config_file = os.path.join(pkg_share_gazebo, 'config', 'ros_gz_bridge.yaml')
 
-
     # 3. Launch configuration variables (alphabetical)
     headless = LaunchConfiguration('headless')
     pitch = LaunchConfiguration('pitch')
@@ -108,7 +107,6 @@ def generate_launch_description():
 
     declare_yaw_cmd = DeclareLaunchArgument(
         name='yaw', default_value='0.0', description='Spawn yaw [rad]')
-
 
     # Start the Gazebo server (physics and sensors, no window)
     start_gazebo_server_cmd = IncludeLaunchDescription(

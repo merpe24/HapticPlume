@@ -56,7 +56,7 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 
   # The world and obstacles.yaml are two hand-maintained copies of one geometry
-  ament_add_pytest_test(test_world_maches_obstacles
+  ament_add_pytest_test(test_world_macthes_obstacles
     test/test_world_matches_obstacles.py
   )
 endif()

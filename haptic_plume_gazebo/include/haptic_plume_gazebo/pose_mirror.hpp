@@ -12,13 +12,21 @@
  * The pose arrives as a gz.msgs.Odometry, bridged ROS_TO_GZ from /hp/odom by
  * ros_gz_bridge (see config/ros_gz_bridge.yaml). There is deliberately no new ROS
  * node and no new message type on this path.
- * 
+ *
  * Requires a world with gravity disabled. SetWorldPoseCmd teleports the body but does
  * not zero its velocity, so under gravity the teleport is undone by one step of
  * integration at an ever-growing speed. pipeline.world sets <gravity>0 0 0</gravity>
  *
+ * Declared as a WORLD plugin in pipeline.world, not on the drone's URDF. gz-sim 8.11
+ * stores but never instantiates a <plugin> element on a model spawned at runtime via
+ * ros_gz_sim create, and it fails silently at every verbosity level (verified
+ * 2026-08-12, B6). The cost is that the drone must be found by name, and that lookup
+ * has to tolerate the model not existing yet, because the world loads before the spawn.
+ *
  * SDF parameters:
  *     <topic> (string): gz topic carrying gz.msgs.Odometry. Default "/hp/odom"
+ *     <model_name> (string): name of the model to drive. Default "drone". Must match
+ *         the -name passed to `create` in haptic_plume.gazebo.launch.py
  *
  * @author premmm
  * @date August 5, 2026
@@ -46,8 +54,8 @@ namespace haptic_plume
  */
 class PoseMirror
   : public gz::sim::System,
-    public gz::sim::ISystemConfigure,
-    public gz::sim::ISystemPreUpdate
+  public gz::sim::ISystemConfigure,
+  public gz::sim::ISystemPreUpdate
 {
 public:
   PoseMirror() = default;
@@ -55,7 +63,7 @@ public:
 
   /**
    * @brief Bind to the model entity and subscribe to the pose topic.
-   * @param _entity   Entity this plugin is attached to (the drone model)
+   * @param _entity   Entity this plugin is attached to (the WORLD, not the drone)
    * @param _sdf      The plugin's own SDF element, source of <topic>
    * @param _ecm      Entity-component manager
    * @param _eventMgr Event manager (unused)
@@ -86,6 +94,7 @@ private:
   gz::sim::Model model_{gz::sim::kNullEntity};
   gz::transport::Node node_;
   std::string topic_{"/hp/odom"};       // overridable from SDF
+  std::string model_name_{"drone"};     // overridable from SDF
 
   // Single-slot latest-message buffer. Written by the transport thread, read by the
   // sim thread — the same discipline falcon_node will use for its 1 kHz servo loop.

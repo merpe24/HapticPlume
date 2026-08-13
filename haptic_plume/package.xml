@@ -19,6 +19,7 @@
   <exec_depend>haptic_plume_gazebo</exec_depend>
   <exec_depend>haptic_plume_interfaces</exec_depend>
   <exec_depend>haptic_plume_system_tests</exec_depend>
+  <exec_depend>haptic_plume_teleop</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

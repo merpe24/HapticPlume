@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Bring up gamepad teleop: the joy driver and the axis mapper.
 
 Starts joy_node to read the device and teleop_mapper_node to turn its axes into
@@ -10,7 +10,7 @@ The keyboard fallback is deliberately NOT a launch file: teleop_twist_keyboard
 reads raw stdin, and ros2 launch gives child processes no TTY, so it dies with
 "termios.error: Inappropriate ioctl for device". Run it by hand instead:
 
-    ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args \\
+    ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args \
       -r /cmd_vel:=/hp/cmd_vel -p stamped:=true -p frame_id:=map -p speed:=1.0
 
 :author: premmm
