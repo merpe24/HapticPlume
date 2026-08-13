@@ -8,28 +8,24 @@ This node holds one Scenario and, once per tick:
     - publishes both the measurement and the ground truth
     - draws the field and the airflow arrows for RViz
 
-sensor_model.py is imported, never modified: it stays ROS-free. That separation
-is Phase A's rule and is what keeps the GADEN swap (Phase F) open and limits the
-inverse-crime coupling of risk R8.
+sensor_model.py is imported, never modified: staying ROS-free is Phase A's rule,
+and it keeps the GADEN swap (Phase F) open and limits the inverse-crime coupling
+of risk R8.
 
-RATE COUPLING -- the one real design point of this node.
-FirstOrderSensor discretizes paper Eq. (24) by backward Euler at a nominal dt,
-and haptic_plume_estimation.sensor_compensation inverts that SAME
-discretization. They only cancel if they use the same step, so the lag here is
-built with dt = 1 / publish_rate, and update() is always called with that
-nominal dt rather than a measured wall-clock delta -- the same reason
+RATE COUPLING -- the one real design point of this node. FirstOrderSensor
+discretizes paper Eq. (24) by backward Euler at a nominal dt and
+sensor_compensation inverts that SAME discretization; they cancel only at the
+same step. So the lag is built with dt = 1 / publish_rate and update() always
+gets that nominal dt, never a measured wall-clock delta -- the same reason
 drone_kinematics_node integrates at a fixed dt.
 
-    ==> Phase C consequence: the compensator must run at the SENSOR's rate
-        (publish_rate, 20 Hz) even though the particle filter updates at 5 Hz.
-        Compensate every sample at 20 Hz, then decimate to feed the filter.
-        Compensating at 5 Hz a signal generated at 20 Hz leaves residual lag,
-        and residual lag looks exactly like a source displaced downwind.
+    ==> Phase C consequence: compensate at the SENSOR's rate (20 Hz), THEN
+        decimate to feed the 5 Hz filter. Compensating a 20 Hz signal at 5 Hz
+        leaves residual lag, and residual lag looks exactly like a source
+        displaced downwind.
 
-GROUND TRUTH WARNING.
-/hp/gas/true_concentration and /hp/gas/field_markers are ground truth. They are
-debug and logging channels only, and nothing on them may reach the operator
-during a trial: decision D6 makes viz_gate_node the only gate, and the
+GROUND TRUTH WARNING. /hp/gas/true_concentration and /hp/gas/field_markers are
+debug and logging channels only: D6 makes viz_gate_node the only gate, and the
 operator's RViz subscribes to /hp/display/* alone.
 
 Subscription Topics:

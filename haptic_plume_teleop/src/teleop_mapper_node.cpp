@@ -2,21 +2,13 @@
  * @file teleop_mapper_node.cpp
  * @brief Maps gamepad axes to world-frame velocity commands for the drone.
  *
- * Reads sensor_msgs/Joy and emits geometry_msgs/TwistStamped on /hp/cmd_vel at a
- * fixed rate. Every axis and button is looked up through the parameter file: not one
- * index is hardcoded. That is the whole reason this node exists rather than
- * teleop_twist_joy -- the Falcon in Phase D has device-y vertical and device-z
- * pointing at the operator, and the same YAML schema has to describe it.
- *
- * The command is published from a TIMER, not from the joy callback. An input device
- * delivers events at whatever rate it feels like (a keyboard, at the terminal's
- * 500 ms / 33 Hz repeat), which would make /hp/cmd_vel bursty and leave
- * drone_kinematics_node's 0.3 s staleness gate reasoning about the input device
- * rather than about whether teleop is alive. At a steady 100 Hz the gate means
- * exactly one thing: this node died.
- *
- * /hp/cmd_vel is WORLD-frame (frames.md 6.1), so there is no body-frame rotation
- * here and no yaw command at all -- the drone derives yaw from its own velocity.
+ * Every axis and button is looked up through the parameter file, not one index is
+ * hardcoded -- the reason this node exists rather than teleop_twist_joy, since the
+ * Falcon in Phase D has device-y vertical and device-z pointing at the operator and
+ * the same YAML schema has to describe it. The command is published from a TIMER, not
+ * the joy callback: at a steady 100 Hz, drone_kinematics_node's 0.3 s staleness gate
+ * means exactly one thing, that this node died. /hp/cmd_vel is WORLD-frame
+ * (frames.md 6.1) -- no body-frame rotation here, and no yaw command at all.
  *
  * Subscription Topics:
  *     /joy (sensor_msgs/Joy): Raw device state from joy_node
@@ -49,9 +41,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/joy.hpp"
 
-/**
- * @brief One configured mapping from a joy axis to a velocity component.
- */
+/// One configured mapping from a joy axis to a velocity component.
 struct AxisSpec
 {
   int index = -1;           ///< Joy axis index; negative disables the axis
@@ -60,15 +50,11 @@ struct AxisSpec
   bool invert = false;      ///< Negate the axis before scaling
 };
 
-/**
- * @brief Deadman-gated mapper from device axes to /hp/cmd_vel.
- */
+/// Deadman-gated mapper from device axes to /hp/cmd_vel.
 class TeleopMapper : public rclcpp::Node
 {
 public:
-  /**
-   * @brief Constructor: read the axis map, then start publishing on a fixed timer.
-   */
+  /// Constructor: read the axis map, then publish on a fixed timer.
   TeleopMapper()
   : Node("teleop_mapper")
   {
@@ -88,11 +74,9 @@ public:
     linear_y_ = declare_axis("linear_y", 1, 1.0);
     linear_z_ = declare_axis("linear_z", 2, 0.5);
 
-    // Create the publisher for world-frame velocity commands
     publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(
       "/hp/cmd_vel", 10);
 
-    // Subscribe to the raw device state
     subscription_joy_ = this->create_subscription<sensor_msgs::msg::Joy>(
       "/joy", 10,
       std::bind(&TeleopMapper::joy_callback, this, std::placeholders::_1));
@@ -108,9 +92,7 @@ public:
       publish_rate_, deadman_button_);
   }
 
-  /**
-   * @brief Command zero on the way out, so Ctrl-C never leaves the drone flying.
-   */
+  /// Command zero on the way out, so Ctrl-C never leaves the drone flying.
   ~TeleopMapper()
   {
     command_ = geometry_msgs::msg::Vector3();
@@ -118,14 +100,8 @@ public:
   }
 
 private:
-  /**
-   * @brief Declare one axis's four parameters and return the resulting spec.
-   *
-   * @param name Axis name as it appears under axes: in the YAML
-   * @param default_index Joy axis index used when the YAML is silent
-   * @param default_scale Command at full deflection [m/s]
-   * @return The populated spec
-   */
+  /// Declare one axis's four parameters (index, scale [m/s], deadband, invert).
+  /// name is the key under axes: in the YAML; the defaults apply when it is silent.
   AxisSpec declare_axis(const std::string & name, int default_index, double default_scale)
   {
     AxisSpec spec;
@@ -136,13 +112,7 @@ private:
     return spec;
   }
 
-  /**
-   * @brief Convert one joy axis into a velocity component [m/s].
-   *
-   * @param spec The configured mapping for this component
-   * @param joy The message being read
-   * @return The commanded velocity component [m/s], zero inside the deadband
-   */
+  /// Convert one joy axis into a velocity component [m/s], zero inside the deadband.
   double apply_axis(const AxisSpec & spec, const sensor_msgs::msg::Joy & joy)
   {
     if (spec.index < 0 || static_cast<size_t>(spec.index) >= joy.axes.size()) {
@@ -164,11 +134,7 @@ private:
     return value * spec.scale;
   }
 
-  /**
-   * @brief Latch the newest device state, gated by the deadman button.
-   *
-   * @param msg Shared pointer to the incoming joy message
-   */
+  /// Latch the newest device state, gated by the deadman button.
   void joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg)
   {
     joy_received_ = true;
@@ -199,9 +165,7 @@ private:
     command_.z = apply_axis(linear_z_, *msg);
   }
 
-  /**
-   * @brief Publish the current command at the fixed rate, checking device liveness.
-   */
+  /// Publish the current command at the fixed rate, checking device liveness.
   void timer_callback()
   {
     // Losing the device (unplugged, joy_node died) must stop the drone, exactly
@@ -212,9 +176,7 @@ private:
     publish_command();
   }
 
-  /**
-   * @brief Stamp and send the current command on /hp/cmd_vel.
-   */
+  /// Stamp and send the current command on /hp/cmd_vel.
   void publish_command()
   {
     if (!rclcpp::ok()) {

@@ -2,31 +2,22 @@
  * @file pose_mirror.hpp
  * @brief gz-sim 8 system plugin that drives a model's world pose from a gz topic.
  *
- * Decision D1 makes drone_kinematics_node the motion authority: it integrates
- * /hp/cmd_vel, clamps against the analytic obstacles in obstacles.yaml, and owns
- * odom -> base_link. Gazebo is a renderer and a camera host, never a physics
- * authority. This plugin is the seam that keeps that true — on every simulation step
- * it teleports the model onto the latest pose received from ROS, so Gazebo's own
- * integrator can never disagree with the node about where the drone is.
+ * D1 makes drone_kinematics_node the motion authority and Gazebo a renderer only. This
+ * plugin is the seam that keeps that true: every step it teleports the model onto the
+ * latest pose bridged from /hp/odom (gz.msgs.Odometry, ROS_TO_GZ, ros_gz_bridge.yaml),
+ * so Gazebo's integrator can never disagree about where the drone is. Requires gravity
+ * disabled -- SetWorldPoseCmd moves the body without zeroing its velocity, so one step
+ * of integration would undo each teleport at an ever-growing speed.
  *
- * The pose arrives as a gz.msgs.Odometry, bridged ROS_TO_GZ from /hp/odom by
- * ros_gz_bridge (see config/ros_gz_bridge.yaml). There is deliberately no new ROS
- * node and no new message type on this path.
- *
- * Requires a world with gravity disabled. SetWorldPoseCmd teleports the body but does
- * not zero its velocity, so under gravity the teleport is undone by one step of
- * integration at an ever-growing speed. pipeline.world sets <gravity>0 0 0</gravity>
- *
- * Declared as a WORLD plugin in pipeline.world, not on the drone's URDF. gz-sim 8.11
- * stores but never instantiates a <plugin> element on a model spawned at runtime via
- * ros_gz_sim create, and it fails silently at every verbosity level (verified
- * 2026-08-12, B6). The cost is that the drone must be found by name, and that lookup
- * has to tolerate the model not existing yet, because the world loads before the spawn.
+ * Declared as a WORLD plugin in pipeline.world, not on the drone's URDF: it then loads
+ * deterministically at world load, binds explicitly and logged, and rebinds for free
+ * when a Phase E trial reset respawns the drone. The cost is a lookup by name that must
+ * tolerate the model not existing yet, because the world loads before the spawn.
  *
  * SDF parameters:
  *     <topic> (string): gz topic carrying gz.msgs.Odometry. Default "/hp/odom"
- *     <model_name> (string): name of the model to drive. Default "drone". Must match
- *         the -name passed to `create` in haptic_plume.gazebo.launch.py
+ *     <model_name> (string): model to drive. Default "drone"; must match the -name
+ *         passed to `create` in haptic_plume.gazebo.launch.py
  *
  * @author premmm
  * @date August 5, 2026
@@ -35,11 +26,11 @@
 #ifndef HAPTIC_PLUME_GAZEBO__POSE_MIRROR_HPP_
 #define HAPTIC_PLUME_GAZEBO__POSE_MIRROR_HPP_
 
-#include <memory>                       // std headers first
+#include <memory>
 #include <mutex>
 #include <string>
 
-#include <gz/math/Pose3.hh>             // then gz headers
+#include <gz/math/Pose3.hh>
 #include <gz/msgs/odometry.pb.h>
 #include <gz/sim/Model.hh>
 #include <gz/sim/System.hh>
@@ -49,9 +40,7 @@
 namespace haptic_plume
 {
 
-/**
- * @brief Mirrors a ROS-authored pose onto a Gazebo model every simulation step.
- */
+/// Mirrors a ROS-authored pose onto a Gazebo model every simulation step.
 class PoseMirror
   : public gz::sim::System,
   public gz::sim::ISystemConfigure,
@@ -61,33 +50,21 @@ public:
   PoseMirror() = default;
   ~PoseMirror() override = default;
 
-  /**
-   * @brief Bind to the model entity and subscribe to the pose topic.
-   * @param _entity   Entity this plugin is attached to (the WORLD, not the drone)
-   * @param _sdf      The plugin's own SDF element, source of <topic>
-   * @param _ecm      Entity-component manager
-   * @param _eventMgr Event manager (unused)
-   */
+  /// Read <topic>/<model_name> from SDF and subscribe.
+  /// _entity is the WORLD, not the drone.
   void Configure(
     const gz::sim::Entity & _entity,
     const std::shared_ptr<const sdf::Element> & _sdf,
     gz::sim::EntityComponentManager & _ecm,
     gz::sim::EventManager & _eventMgr) override;
 
-  /**
-   * @brief Teleport the model onto the most recently received pose.
-   * @param _info Simulation timing and pause state
-   * @param _ecm  Entity-component manager
-   */
+  /// Teleport the model onto the latest received pose, binding the model lazily.
   void PreUpdate(
     const gz::sim::UpdateInfo & _info,
     gz::sim::EntityComponentManager & _ecm) override;
 
 private:
-  /**
-   * @brief Store the latest pose. Runs on a gz-transport thread, not the sim thread.
-   * @param _msg Odometry message whose pose field is the commanded world pose
-   */
+  /// Store the latest pose. Runs on a gz-transport thread, not the sim thread.
   void OnOdometry(const gz::msgs::Odometry & _msg);
 
   // Class member variables

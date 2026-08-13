@@ -11,6 +11,15 @@
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>haptic_plume_bringup</test_depend>
+  <test_depend>haptic_plume_interfaces</test_depend>
+  <test_depend>launch_testing</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
+  <test_depend>nav_msgs</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>tf2_ros</test_depend>
+
 
   <export>
     <build_type>ament_cmake</build_type>

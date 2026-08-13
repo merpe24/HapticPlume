@@ -69,15 +69,11 @@ using TaskEvent = haptic_plume_interfaces::msg::TaskEvent;
 using TwistStamped = geometry_msgs::msg::TwistStamped;
 using Trigger = std_srvs::srv::Trigger;
 
-/**
- * @brief Kinematic drone: integrates velocity, clamps to free space, owns the pose.
- */
+/// Kinematic drone: integrates velocity, clamps to free space, owns the pose.
 class DroneKinematics : public rclcpp::Node
 {
 public:
-  /**
-   * @brief Constructor: reads parameters, loads the world, wires up the interface.
-   */
+  /// Constructor: reads parameters, loads the world, wires up the interface.
   DroneKinematics()
   : Node("drone_kinematics")
   {
