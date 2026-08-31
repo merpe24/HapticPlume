@@ -14,7 +14,15 @@ find_package(geometry_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/GasConcentration.msg"
   "msg/TaskEvent.msg"
+  "msg/BeliefSummary.msg"
+  "msg/SourceEstimate.msg"
+  "msg/SourceEstimateArray.msg"
+  "msg/ParticleSet.msg"
+  "msg/GuidanceTarget.msg"
+  "msg/HapticCue.msg"
+  "msg/ConditionConfig.msg"
   "srv/SetScenario.srv"
+  "srv/ResetEstimator.srv"
   DEPENDENCIES std_msgs geometry_msgs
 )
 

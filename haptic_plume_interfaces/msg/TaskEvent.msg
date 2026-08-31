@@ -2,6 +2,9 @@
 
 # Event type constants
 string COLLISION="COLLISION"        # drone collided on obstacles (rising edge only)
+string SOURCE_CONSUMED="SOURCE_CONSUMED"  # a belief tightened past sigma_c and became a source;
+                                          # published BEFORE pf.reset() so the composer's
+                                          # fade-out starts on the event, never on a fresh prior
 string TRIAL_START="TRIAL_START"    # Phase E
 string TRIAL_END="TRIAL_END"        # Phase E
 

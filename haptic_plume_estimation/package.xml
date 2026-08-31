@@ -7,6 +7,8 @@
   <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
   <license>Apache-2.0</license>
 
+  <depend>rclpy</depend>
+  <depend>haptic_plume_interfaces</depend>
   <depend>haptic_plume_core</depend>
   <depend>python3-numpy</depend>
 

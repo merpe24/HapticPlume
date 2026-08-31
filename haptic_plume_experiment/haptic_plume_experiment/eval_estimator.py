@@ -45,6 +45,7 @@ from haptic_plume_estimation.particle_filter import (
     PlumeFilterConfig,
     PlumeParticleFilter,
     PROJECT_Q,
+    STATUS_CONVERGING,
     STATUS_DIVERGED,
 )
 from haptic_plume_estimation.sensor_compensation import (
@@ -54,6 +55,23 @@ from haptic_plume_estimation.sensor_compensation import (
 from haptic_plume_gas_sim.sensor_model import FirstOrderSensor, GasField, GasSensor
 
 import numpy as np
+
+WELL_BEARING_TOL_DEG = 10.0
+WELL_GATES = ('tracking', 'converging')
+
+# The tolerance above is a judgement call, not a measurement, and the Phase C0
+# conclusions turn on it: 10 deg is 1.7 m of lateral error at a 10 m standoff,
+# but an operator pulled 30 deg off still flies broadly the right way and
+# still feeds the filter useful readings. Scored at several widths so the
+# conclusion can be checked against the choice that produced it.
+WELL_TOLERANCES_DEG = (10.0, 20.0, 30.0, 45.0)
+
+# What the well is aimed at. 'belief' is the filter's guess at the source
+# (mne_position). 'waypoint' is the next place worth looking, i.e. the MI
+# waypoint the suggester will publish -- which is what D4 says the well should
+# track until the belief has converged. Measuring only 'belief' measures half
+# the design.
+WELL_TARGETS = ('belief', 'waypoint')
 
 
 @dataclass
@@ -102,6 +120,45 @@ class EvalConfig:
 
 
 @dataclass
+class WellHunts:
+    """
+    What the haptic well did during one trial, under one gating rule.
+
+    One entry per hunt: the filter chases one leak at a time, and a hunt runs
+    from the trial start or the last filter reset to the next consume. Kept
+    raw rather than pre-averaged for the same reason path_cross_at_consume is:
+    the risk R1 attempt that averaged over whole trials ended up measuring the
+    consume rate instead of the thing it asked about.
+
+    Read the timings through had_target or they lie. Measured 2026-08-14:
+    with one leak, 75% of hunts happen after that leak has already been found,
+    and 26% do with three. Those hunts drag every average toward "wrong"
+    without saying anything about the well, and because the contamination
+    falls as leaks are added it reverses the ordering between source counts
+    rather than merely offsetting it.
+    """
+
+    # [s] into the hunt when a pull first appeared at all
+    on_times: np.ndarray = field(default_factory=lambda: np.empty(0))
+    # [s] into the hunt when that pull settled onto a real leak; NaN if the
+    # hunt ended with the operator still being pulled somewhere wrong
+    true_times: np.ndarray = field(default_factory=lambda: np.empty(0))
+    # [-] share of pull-on steps pointing further than the tolerance away
+    misleading_fractions: np.ndarray = field(
+        default_factory=lambda: np.empty(0))
+    # True where a leak was still unfound, i.e. the pull had something it
+    # could have been right about. False marks the filter chasing residual
+    # noise after the last real leak was consumed.
+    had_target: np.ndarray = field(
+        default_factory=lambda: np.empty(0, dtype=bool))
+    # [s] of pull actually rendered during the hunt. Not the same as the span
+    # from t_on to the end: the gating status flickers, so a hunt can span a
+    # minute and contain a second of force. A cue that is on for under a
+    # second at a time is a force pop (risk R5), not guidance.
+    on_durations: np.ndarray = field(default_factory=lambda: np.empty(0))
+
+
+@dataclass
 class TrialResult:
     """Everything one trial reports; one row of the summary tables."""
 
@@ -125,6 +182,11 @@ class TrialResult:
     # run down the plume axis is read off the distributions, not from a mean.
     path_cross_at_consume: np.ndarray = field(
         default_factory=lambda: np.empty(0))
+
+    # Haptic-well timings keyed by gating rule (WELL_GATES). Distinct from
+    # localization_time_s above, which is when the ESTIMATOR finished — the
+    # operator's experience starts and ends at different moments.
+    well_hunts: dict = field(default_factory=dict)
 
     @property
     def correct_count(self):
@@ -169,6 +231,12 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
     last_consume_step = None
     path_cross = []
     visited = []
+    trackers = [_WellTracker(well_target, gate, config.dt, tol)
+                for well_target in WELL_TARGETS
+                for gate in WELL_GATES
+                for tol in WELL_TOLERANCES_DEG]
+    unfound = _unfound_sources(scenario.source_positions, consumed.positions,
+                               config.d_cluster)
 
     for step in range(config.max_steps):
         visited.append(position.copy())
@@ -180,6 +248,18 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
         m_hat = float(consumed.concentration(*position))
         status = pf.update(position, z_ff, m_hat=m_hat)
         n_diverged += status == STATUS_DIVERGED
+
+        # --- score the well: what would the operator's hand be feeling? ---
+        # Read before the consume block, exactly as path_cross is: after
+        # pf.reset() this measures a fresh uniform prior. `target` is last
+        # step's waypoint, which is exactly what a live composer renders --
+        # the suggester publishes at 2 Hz and the composer holds the last one.
+        bearing_error = {
+            'belief': _well_bearing_error(position, pf.mne_position, unfound),
+            'waypoint': _well_bearing_error(position, target, unfound),
+        }
+        for tracker in trackers:
+            tracker.step(step, status, bearing_error[tracker.target])
 
         # --- consume: a tight enough belief becomes a localized source ---
         if (should_consume(pf.sigma_position_norm, config.sigma_c)
@@ -195,6 +275,15 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
             # waves everything through. Mirrors pf.reset() exactly.
             visited.clear()
 
+            # Same scoping for the well: a consume ends one hunt, and the
+            # retarget that follows starts the next. Close before recomputing
+            # unfound below — the pre-consume value is what says whether this
+            # hunt had a real leak to be right about.
+            for tracker in trackers:
+                tracker.close(step, len(unfound) > 0)
+            unfound = _unfound_sources(scenario.source_positions,
+                                       consumed.positions, config.d_cluster)
+
         # --- plan and move: kinematic x_dot = v, paper Eq. (20) ---
         if step % config.plan_every == 0:
             target = PLANNERS[planner](position, pf, scenario, config,
@@ -203,12 +292,18 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
                               scenario.search_area)
         path_length += moved
 
+    # The trial almost always ends mid-hunt; close_if_open skips the empty
+    # hunt left behind when the very last step happened to consume.
+    for tracker in trackers:
+        tracker.close_if_open(config.max_steps - 1, len(unfound) > 0)
+
     return _summarize(scenario, planner, seed, config, consumed, pf,
-                      n_diverged, path_length, last_consume_step, path_cross)
+                      n_diverged, path_length, last_consume_step, path_cross,
+                      trackers)
 
 
 def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
-               path_length, last_consume_step, path_cross):
+               path_length, last_consume_step, path_cross, trackers):
     """
     Turn the end state of a trial into a TrialResult.
 
@@ -222,6 +317,7 @@ def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
     :param path_length: distance flown [m]
     :param last_consume_step: step index of the final consume, or None
     :param path_cross: cross-axis path spreads recorded at each consume [m]
+    :param trackers: the well trackers, already closed
     :return: the assembled result
     :rtype: TrialResult
     """
@@ -238,6 +334,7 @@ def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
         steps=config.max_steps,
         consumed_positions=consumed.positions,
         path_cross_at_consume=np.asarray(path_cross, dtype=float),
+        well_hunts={t.key: t.hunts() for t in trackers},
     )
     error = mean_pair_distance(scenario.source_positions, consumed.positions)
     if error is not None:
@@ -399,6 +496,13 @@ def run_suite(n_sources_list=(1, 2, 3), n_trials=10, base_seed=0, config=None,
     return results
 
 
+def _run_grouped(sources, n_trials, base_seed, config):
+    """Run the suite once per source count, keyed by count for the tables."""
+    return {str(n): run_suite([n], n_trials=n_trials, base_seed=base_seed,
+                              config=config)
+            for n in sources}
+
+
 def run_non_informative_study(n_sources=2, n_trials=5, base_seed=0,
                               config=None):
     """
@@ -542,6 +646,118 @@ def format_observability_table(results_by_planner):
     return '\n'.join(lines)
 
 
+def format_well_table(results_by_group):
+    """
+    Render what the haptic well did, per source count and gating rule.
+
+    The columns are the whole point of Phase C0:
+
+        live      hunts with a leak still to find; every timing below is over
+                  these alone
+        phantom   hunts the filter ran after the last real leak was already
+                  consumed. The operator still feels a pull, but nothing it
+                  could point at remains, so scoring one says nothing about
+                  the well. Counted rather than hidden: a high number is a
+                  real usability problem in its own right, and the reason the
+                  system needs an operator "found it" declaration (O3)
+        t_on      when a pull first appears in a hunt
+        felt      seconds of pull actually rendered in the hunt; far
+                  below the span from t_on onward means it flickers
+        t_usable  when that pull settles onto a leak and stays there
+        wrong %   share of pull-on time spent pointing more than
+                  WELL_BEARING_TOL_DEG away from every unfound leak
+        never %   share of live hunts where the pull never became usable
+
+    t_usable - t_on is how long the operator is pulled at empty floor, which
+    is the number nothing in this project had ever measured.
+
+    :param results_by_group: dict mapping a group label to its TrialResult list
+    :return: the printable table
+    :rtype: str
+    """
+    lines = [
+        'sources  gate          live  phantom  t_on s  felt s  t_usable s  '
+        'wrong %  never %',
+        '-------  -----------  -----  -------  ------  ------  ----------  '
+        '-------  -------',
+    ]
+    for label, results in results_by_group.items():
+        for gate in WELL_GATES:
+            key = ('belief', gate, WELL_BEARING_TOL_DEG)
+            lines.append(f'{label:>7}  {gate:<11}  '
+                         + _well_row([r.well_hunts[key] for r in results]))
+    return '\n'.join(lines)
+
+
+def format_well_sweep_table(results_by_group):
+    """
+    Render the well against both targets, over a sweep of tolerances.
+
+    Two questions in one table, both raised by the first Phase C0 run:
+
+    1. Is "usable" being decided by the arbitrary 10 deg bar? Every row is
+       the same flight scored at a different width, so a conclusion that
+       survives all four widths is about the well and not about the bar.
+    2. Does aiming the well at the next place worth looking beat aiming it at
+       the current guess? D4 already specifies the former during search, and
+       the first run only ever measured the latter.
+
+    Fixed at the 'tracking' gate throughout. The 'converging' gate renders
+    0.6-0.8 s of force per hunt (measured 2026-08-14), i.e. about four scored
+    steps, so every percentage under it rests on almost no samples and
+    never % is decided by a single step. It is also unusable as a cue for
+    exactly that reason: CONVERGING spans a belief spread of 0.5-1.0 m, the
+    filter crosses that band in well under a second, and the spread wobbles
+    across the threshold, so the gate opens and shuts repeatedly. That is a
+    force pop (risk R5), not guidance.
+
+    A caveat on the 'waypoint' rows. An information-maximizing waypoint is not
+    trying to point at a leak, so bearing-to-leak scores it on a job it was
+    never given and probably reads low. The number that would settle it is
+    time-to-find under an operator who actually follows the cue, which needs a
+    well-following planner in PLANNERS rather than another observer.
+
+    :param results_by_group: dict mapping a group label to its TrialResult list
+    :return: the printable table
+    :rtype: str
+    """
+    lines = [
+        'sources  target    tol deg   live  phantom  t_on s  felt s  '
+        't_usable s  wrong %  never %',
+        '-------  --------  -------  -----  -------  ------  ------  '
+        '----------  -------  -------',
+    ]
+    for label, results in results_by_group.items():
+        for well_target in WELL_TARGETS:
+            for tol in WELL_TOLERANCES_DEG:
+                key = (well_target, 'tracking', tol)
+                lines.append(
+                    f'{label:>7}  {well_target:<8}  {tol:>7.0f}  '
+                    + _well_row([r.well_hunts[key] for r in results]))
+    return '\n'.join(lines)
+
+
+def _well_row(hunts):
+    """
+    Render one row of well statistics, over live hunts only.
+
+    :param hunts: list of WellHunts, one per trial
+    :return: the formatted row body, without its leading label columns
+    :rtype: str
+    """
+    on = _stack([h.on_times[h.had_target] for h in hunts])
+    felt = _stack([h.on_durations[h.had_target] for h in hunts])
+    settled = _stack([h.true_times[h.had_target] for h in hunts])
+    wrong = _stack([h.misleading_fractions[h.had_target] for h in hunts])
+    n_all = sum(h.had_target.size for h in hunts)
+    n_live = sum(int(h.had_target.sum()) for h in hunts)
+    never = (100.0 * float(np.mean(~np.isfinite(settled)))
+             if settled.size else float('nan'))
+    return (f'{n_live:>5}  {n_all - n_live:>7}  {_finite_mean(on):>6.1f}  '
+            f'{_finite_mean(felt):>6.1f}  {_finite_mean(settled):>10.1f}  '
+            f'{100.0 * _finite_mean(wrong):>7.1f}  {never:>7.1f}')
+
+
 def _cross_axis_spread(positions, theta):
     """
     Measure the flown path's spread perpendicular to the believed wind axis.
@@ -567,6 +783,213 @@ def _cross_axis_spread(positions, theta):
     return float(np.std(xy @ across))
 
 
+def _well_bearing_error(position, target, unfound_positions):
+    """
+    Bearing error from the rendered pull to the nearest leak still to find.
+
+    Horizontal only: the drone flies at fixed altitude (frames.md section 5)
+    and the well is rendered in the horizontal plane (section 6).
+
+    The minimum is taken over every leak not yet found, not over the one the
+    belief happens to be chasing. O4 makes which leak comes first emergent,
+    so the operator cannot be sent after a specific one and does not care
+    which of them a correct pull leads to.
+
+    :param position: (3,) drone position [m]
+    :param target: (3,) haptic well target, i.e. the MNE position [m]
+    :param unfound_positions: (K, 3) true leaks with no consumed estimate yet
+    :return: smallest absolute bearing error [deg], NaN when undefined
+    :rtype: float
+    """
+    if len(unfound_positions) == 0:
+        return float('nan')
+    here = np.asarray(position, dtype=float)[0:2]
+    to_target = np.asarray(target, dtype=float)[0:2] - here
+    truths = np.atleast_2d(np.asarray(unfound_positions, dtype=float))
+    delta = truths[:, 0:2] - here
+    # A pull with no direction, or a leak the drone is sitting on top of, has
+    # no bearing to be right or wrong about.
+    if (np.linalg.norm(to_target) < 1e-9
+            or float(np.min(np.linalg.norm(delta, axis=1))) < 1e-9):
+        return float('nan')
+    bearing = np.arctan2(to_target[1], to_target[0])
+    truth = np.arctan2(delta[:, 1], delta[:, 0])
+    error = np.arctan2(np.sin(truth - bearing), np.cos(truth - bearing))
+    return float(np.degrees(np.min(np.abs(error))))
+
+
+def _unfound_sources(true_positions, consumed_positions, d_match):
+    """
+    Return the true leaks that no consumed estimate has landed near yet.
+
+    :param true_positions: (L, 3) true source positions [m]
+    :param consumed_positions: (M, 3) consumed estimate positions [m]
+    :param d_match: how close an estimate must be to count as found [m]
+    :return: (K, 3) the still-unfound true positions
+    :rtype: numpy.ndarray
+    """
+    truths = np.atleast_2d(np.asarray(true_positions, dtype=float))
+    estimates = np.asarray(consumed_positions, dtype=float)
+    if estimates.size == 0:
+        return truths
+    estimates = np.atleast_2d(estimates)
+    distances = np.linalg.norm(truths[:, None, :] - estimates[None, :, :],
+                               axis=2)
+    return truths[distances.min(axis=1) > d_match]
+
+
+def _finite_mean(values):
+    """Mean over the finite entries only; NaN when there are none."""
+    finite = values[np.isfinite(values)]
+    return float(finite.mean()) if finite.size else float('nan')
+
+
+class _WellTracker:
+    """
+    Per-hunt bookkeeping for one (target, gate, tolerance) combination.
+
+    A pure observer: it reads the belief and never writes to it, so a whole
+    grid of trackers can run side by side and none of them can change a
+    trial's outcome. That is what makes the tolerance sweep free — the
+    tolerance decides which steps get scored, not what the drone flew.
+
+    A hunt is one belief's lifetime — trial start or the last pf.reset() to
+    the next consume — because that is the only window a live composer could
+    ever scope to. Source two must not be credited with flying done for
+    source one.
+    """
+
+    def __init__(self, target, gate, dt, tol_deg=WELL_BEARING_TOL_DEG):
+        """
+        Build a tracker for one target, gating rule and tolerance.
+
+        :param target: name from WELL_TARGETS
+        :param gate: name from WELL_GATES
+        :param dt: simulation step period [s]
+        :param tol_deg: bearing error a pull may carry and still be usable
+        """
+        if target not in WELL_TARGETS:
+            raise ValueError(f'unknown well target {target!r}; '
+                             f'have {WELL_TARGETS}')
+        self.target = target
+        if gate not in WELL_GATES:
+            raise ValueError(f'unknown well gate {gate!r}; have {WELL_GATES}')
+        self.gate = gate
+        self.dt = dt
+        self.tol_deg = tol_deg
+        self.on_times = []
+        self.true_times = []
+        self.misleading_fractions = []
+        self.had_target = []
+        self.on_durations = []
+        self._start_hunt(0)
+
+    @property
+    def key(self):
+        """Identify this tracker in TrialResult.well_hunts."""
+        return (self.target, self.gate, self.tol_deg)
+
+    def is_on(self, status):
+        """
+        Report whether this rule would render a pull at all.
+
+        :param status: the filter's status this step
+        :return: True when the well is rendered
+        :rtype: bool
+        """
+        if self.gate == 'converging':
+            return status == STATUS_CONVERGING
+        return status != STATUS_DIVERGED
+
+    def step(self, step, status, bearing_error_deg):
+        """
+        Score one simulation step.
+
+        :param step: step index within the trial
+        :param status: the filter's status this step
+        :param bearing_error_deg: bearing error of the rendered pull [deg]
+        """
+        if not self.is_on(status):
+            return
+        self._n_on += 1
+        self._last_on = step
+        if self._first_on is None:
+            self._first_on = step
+        # NaN counts as misleading: a pull with no leak to point at is not a
+        # pull that points at a leak. Whole hunts of it are excluded later by
+        # had_target rather than here, so the count stays meaningful either
+        # way this is read.
+        if not (bearing_error_deg <= self.tol_deg):
+            self._n_bad += 1
+            self._last_bad = step
+
+    def close(self, step, had_target):
+        """
+        End the current hunt and record its numbers.
+
+        The settle time is measured backwards from the end of the hunt, not
+        taken at the first moment the bearing happened to be right: a diffuse
+        belief sweeps past the correct bearing by luck. A hunt whose last
+        rendered pull was still wrong never became usable at all, and is
+        recorded as NaN rather than as the hunt's length.
+
+        :param step: step index the hunt ended on
+        :param had_target: whether a leak was still unfound during this hunt
+        """
+        self.on_times.append(self._t(self._first_on))
+        self.true_times.append(self._settle_time())
+        self.misleading_fractions.append(
+            self._n_bad / self._n_on if self._n_on else float('nan'))
+        self.had_target.append(bool(had_target))
+        self.on_durations.append(self._n_on * self.dt)
+        self._start_hunt(step + 1)
+
+    def close_if_open(self, step, had_target):
+        """Close a partial hunt at the end of a trial; skip an empty one."""
+        if step >= self._hunt_start:
+            self.close(step, had_target)
+
+    def hunts(self):
+        """
+        Freeze what was recorded into arrays.
+
+        :return: the per-hunt timings
+        :rtype: WellHunts
+        """
+        return WellHunts(
+            on_times=np.asarray(self.on_times, dtype=float),
+            true_times=np.asarray(self.true_times, dtype=float),
+            misleading_fractions=np.asarray(self.misleading_fractions,
+                                            dtype=float),
+            had_target=np.asarray(self.had_target, dtype=bool),
+            on_durations=np.asarray(self.on_durations, dtype=float))
+
+    def _start_hunt(self, step):
+        """Begin a fresh hunt, discarding the previous one's counters."""
+        self._hunt_start = step
+        self._first_on = None
+        self._last_on = None
+        self._last_bad = None
+        self._n_on = 0
+        self._n_bad = 0
+
+    def _t(self, step):
+        """Convert an absolute step index to seconds into this hunt."""
+        if step is None:
+            return float('nan')
+        return (step - self._hunt_start) * self.dt
+
+    def _settle_time(self):
+        """Seconds in after which no rendered pull was ever misleading."""
+        if self._first_on is None:
+            return float('nan')                 # nothing was ever rendered
+        if self._last_bad is None:
+            return self._t(self._first_on)      # right from the first tick
+        if self._last_bad == self._last_on:
+            return float('nan')                 # still wrong when it ended
+        return self._t(self._last_bad + 1)
+
+
 def _stack(arrays):
     """
     Concatenate a list of 1-D arrays, tolerating an empty list.
@@ -584,7 +1007,7 @@ def main(args=None):
     parser = argparse.ArgumentParser(
         description='Headless evaluation of the MultiPLE estimator (Phase A)')
     parser.add_argument('--study', default='both',
-                        choices=('suite', 'non-informative', 'both'),
+                        choices=('suite', 'non-informative', 'well', 'both'),
                         help='which study to run')
     parser.add_argument('--trials', type=int, default=10,
                         help='trials per scenario group')
@@ -605,11 +1028,7 @@ def main(args=None):
         trials, sources = 2, [1, 2]
 
     if parsed.study in ('suite', 'both'):
-        grouped = {}
-        for n_sources in sources:
-            grouped[str(n_sources)] = run_suite(
-                [n_sources], n_trials=trials, base_seed=parsed.seed,
-                config=config)
+        grouped = _run_grouped(sources, trials, parsed.seed, config)
         print('\nScenario suite (infotaxis agent, seeded 20 m x 20 m worlds)')
         print(format_suite_table(grouped))
         print('\nPaper reference (Gaussian-plume environment, infotaxis): '
@@ -625,6 +1044,18 @@ def main(args=None):
         print('\nObservability at consume (cross-axis path spread since the '
               'last reset) — INSTRUMENTATION, not a working gate')
         print(format_observability_table(study))
+
+    if parsed.study == 'well':
+        grouped = _run_grouped(sources, trials, parsed.seed, config)
+        print('\nHaptic well observability (Phase C0): when does a pull '
+              'appear, and when does it start telling the truth?')
+        print(format_well_table(grouped))
+        print(f'\nBearing tolerance {WELL_BEARING_TOL_DEG:.0f} deg. Compare '
+              't_usable against the mean time s column of --study suite, '
+              'which is when the ESTIMATOR finished, not the operator.')
+        print('\nSame flights, scored against both well targets over a sweep '
+              'of tolerances (tracking gate)')
+        print(format_well_sweep_table(grouped))
 
     return 0
 

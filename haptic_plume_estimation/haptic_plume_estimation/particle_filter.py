@@ -325,6 +325,29 @@ class PlumeParticleFilter:
         return estimate
 
     @property
+    def sigma(self):
+        """
+        Per-parameter weighted standard deviation of the belief.
+
+        theta uses the circular standard deviation sqrt(-2 ln R) for the same
+        reason mmse averages it circularly: a belief straddling the +/-pi
+        branch cut has a linear spread near 2 pi no matter how tight it
+        actually is, so a converged wind direction would be reported as
+        maximally uncertain (risk R4).
+
+        :return: (8,) standard deviations, same order and units as mmse
+        :rtype: numpy.ndarray
+        """
+        mean = self.weights @ self.particles
+        variance = self.weights @ (self.particles - mean) ** 2
+        deviation = np.sqrt(np.maximum(variance, 0.0))
+        theta = self.particles[:, 3]
+        resultant = np.hypot(self.weights @ np.sin(theta),
+                             self.weights @ np.cos(theta))
+        deviation[3] = np.sqrt(-2.0 * np.log(max(float(resultant), 1e-12)))
+        return deviation
+
+    @property
     def sigma_position(self):
         """
         Per-axis standard deviation of the estimated source position.

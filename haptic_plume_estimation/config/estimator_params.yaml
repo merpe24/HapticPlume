@@ -1,0 +1,49 @@
+# Parameters for plume_estimator (haptic_plume_estimation).
+#
+# Every value here is a validated number, not random. SINGLE-SOURCE frame,
+# measured 2026-08-30 at the live 20 Hz compensator rate: one leak declared
+# per trial, 100% declaration, 80% within 1.5 m, median error 0.71 m, from a
+# detection standoff of 2.5 m. The older 73% correct-count / 2-3.6% error
+# suite was a 5 Hz MULTI-source number and is not this operating point.
+# CLAUDE.md's C2 section carries the eight fixes that failed to save it.
+
+plume_estimator:
+  ros__parameters:
+
+    # Timing
+    # sensor_rate MUST equal gas_field_server's publish_rate. Eq. (24) is
+    # inverted with the same discretization that generated the lag, so
+    # compensating a 20 Hz signal at 5 Hz leaves residual lag -- and residual
+    # lag looks exactly like a source displaced downwind.
+    sensor_rate: 20.0         # [Hz] arrival rate of /hp/gas/measurement
+    pf_decimation: 4          # PF updates every Nth sample -> 5 Hz, Phase A's rate
+    rate_tolerance: 0.05      # [-] WARN if the observed period is off by more than this
+    particles_rate: 1.0       # [Hz] visualization channel only
+
+    # Particle filter
+    # These are EvalConfig's values, NOT PlumeFilterConfig's dataclass defaults.
+    # The defaults are the paper's (n_particles 3500, sigma_c 0.7) and sigma_c
+    # 0.7 over-consumes on this noisier chain: 2 true leaks -> 3.0 found, 17%
+    # success at 240 s. Constructing PlumeFilterConfig() bare is a silent
+    # regression, not a crash.
+    n_particles: 1500
+    q: 0.1                    # [kg/m^3] likelihood scale, Eq. (10)
+    sigma_c: 0.5              # [m] consume threshold, Eq. (11)
+    d_cluster: 1.8            # [m] agglomerative merge distance, Algorithm 1
+    max_sources: 1            # single-source frame: one declaration per trial
+    pf_seed: 0                # D7: logged at startup; reproduces the belief bit-exactly
+
+    # Sensor chain
+    # tau_rise MUST equal gas_params.yaml. tau_rec DELIBERATELY DOES NOT: the
+    # sensor really recovers at 8.0 s, but tau_for() picks the rise/recovery
+    # branch from a single-sample slope, so at 20 Hz noise chooses the branch
+    # and the 8/3 gain asymmetry rectifies it into a DC offset. Measured on
+    # clean air at 20 Hz: -0.0558 +/- 0.0363, against a plume of only 0.05
+    # nine metres downwind. At 3.0: +0.0008 +/- 0.0149, which moves detection
+    # from 6% to 100% and the standoff from -1.0 m to 2.5 m.
+    tau_rise: 3.0             # [s] rise constant, Eq. (24), matches the sensor
+    tau_rec: 3.0              # [s] COMPENSATOR ONLY -- the sensor keeps 8.0
+    gamma: 5.0                # [rad/s] compensator low-pass, Eq. (27)
+
+    # Frames
+    map_frame: "map"

@@ -1,0 +1,8 @@
+# Request: reset the particle filter, mid-trial or between trials
+bool clear_consumed     # true: drop the consumed set too (Phase E per-trial reset)
+                        # false: keep it, a mid-trial filter reset only (R11, director-only, logged)
+int32 pf_seed           # new Generator seed; a negative value keeps the current RNG stream
+---
+# Response
+bool success            # true if the estimator was reset
+string message          # human-readable result or error
