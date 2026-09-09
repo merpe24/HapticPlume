@@ -36,6 +36,9 @@ Usage::
 import argparse
 from dataclasses import dataclass, field
 from itertools import permutations
+import os
+
+from ament_index_python.packages import get_package_share_directory
 
 from haptic_plume_core.scenario import random_scenario
 
@@ -55,6 +58,8 @@ from haptic_plume_estimation.sensor_compensation import (
 from haptic_plume_gas_sim.sensor_model import FirstOrderSensor, GasField, GasSensor
 
 import numpy as np
+
+import yaml
 
 WELL_BEARING_TOL_DEG = 10.0
 WELL_GATES = ('tracking', 'converging')
@@ -472,8 +477,36 @@ PLANNERS = {
 }
 
 
+def load_pipe_segments(obstacles_file=None):
+    """
+    Read the capsules leaks may sit on, from the live system's own geometry.
+
+    Deliberately the same obstacles.yaml the kinematics clamp and Phase C's PRF
+    read, so a headless study cannot drift from what the drone actually flies
+    around. NOTE the trial loop still models no obstacles: placing leaks on the
+    pipes does not make the drone avoid them, so time-to-declare stays optimistic.
+
+    :param obstacles_file: path to obstacles.yaml; None resolves the
+        haptic_plume_description default
+    :return: [(p0, p1, radius)] capsules
+    :rtype: list
+    """
+    if obstacles_file is None:
+        obstacles_file = os.path.join(
+            get_package_share_directory('haptic_plume_description'),
+            'config', 'obstacles.yaml')
+    with open(obstacles_file) as handle:
+        document = yaml.safe_load(handle)
+    return [
+        (np.asarray(segment['p0'], dtype=float),
+         np.asarray(segment['p1'], dtype=float),
+         float(segment['radius']))
+        for segment in document['segments']
+    ]
+
+
 def run_suite(n_sources_list=(1, 2, 3), n_trials=10, base_seed=0, config=None,
-              planner='infotaxis'):
+              planner='infotaxis', pipe_segments=None):
     """
     Run the seeded scenario suite the Phase A definition of done is scored on.
 
@@ -482,6 +515,8 @@ def run_suite(n_sources_list=(1, 2, 3), n_trials=10, base_seed=0, config=None,
     :param base_seed: first seed; each trial uses base_seed + index
     :param config: EvalConfig; None uses the defaults
     :param planner: planner name to fly with
+    :param pipe_segments: [(p0, p1, radius)] to place leaks on; None keeps the
+        uniform placement the Phase A baseline was measured with
     :return: list of TrialResult
     :rtype: list
     """
@@ -490,21 +525,22 @@ def run_suite(n_sources_list=(1, 2, 3), n_trials=10, base_seed=0, config=None,
     for n_sources in n_sources_list:
         for trial in range(n_trials):
             seed = base_seed + 1000 * n_sources + trial
-            scenario = random_scenario(n_sources, seed)
+            scenario = random_scenario(n_sources, seed,
+                                       pipe_segments=pipe_segments)
             results.append(run_trial(scenario, config, seed=seed,
                                      planner=planner))
     return results
 
 
-def _run_grouped(sources, n_trials, base_seed, config):
+def _run_grouped(sources, n_trials, base_seed, config, pipe_segments=None):
     """Run the suite once per source count, keyed by count for the tables."""
     return {str(n): run_suite([n], n_trials=n_trials, base_seed=base_seed,
-                              config=config)
+                              config=config, pipe_segments=pipe_segments)
             for n in sources}
 
 
 def run_non_informative_study(n_sources=2, n_trials=5, base_seed=0,
-                              config=None):
+                              config=None, pipe_segments=None):
     """
     Compare informative and non-informative trajectories — the risk R1 study.
 
@@ -515,6 +551,8 @@ def run_non_informative_study(n_sources=2, n_trials=5, base_seed=0,
     :param n_trials: scenarios to run
     :param base_seed: first seed
     :param config: EvalConfig; None uses the defaults
+    :param pipe_segments: [(p0, p1, radius)] to place leaks on; None keeps the
+        uniform placement the Phase A baseline was measured with
     :return: dict mapping planner name to its list of TrialResult
     :rtype: dict
     """
@@ -522,7 +560,8 @@ def run_non_informative_study(n_sources=2, n_trials=5, base_seed=0,
     results = {name: [] for name in PLANNERS}
     for trial in range(n_trials):
         seed = base_seed + trial
-        scenario = random_scenario(n_sources, seed)
+        scenario = random_scenario(n_sources, seed,
+                                   pipe_segments=pipe_segments)
         for name in PLANNERS:
             results[name].append(
                 run_trial(scenario, config, seed=seed, planner=name))
@@ -1018,7 +1057,19 @@ def main(args=None):
                         help='simulation steps per trial')
     parser.add_argument('--quick', action='store_true',
                         help='small, fast run for smoke-testing the harness')
+    parser.add_argument('--leaks-on-pipes', action='store_true',
+                        help='place leaks on the obstacles.yaml pipe surfaces '
+                             'instead of anywhere in the room')
+    parser.add_argument('--obstacles-file', default=None,
+                        help='obstacles.yaml to read with --leaks-on-pipes; '
+                             'defaults to the haptic_plume_description copy')
     parsed = parser.parse_args(args)
+
+    pipes = (load_pipe_segments(parsed.obstacles_file)
+             if parsed.leaks_on_pipes else None)
+    if pipes is not None:
+        print(f'Leaks placed on {len(pipes)} pipe surface(s) at flight '
+              f'altitude — NOT the Phase A baseline placement.')
 
     config = EvalConfig(max_steps=parsed.steps)
     trials = parsed.trials
@@ -1028,7 +1079,7 @@ def main(args=None):
         trials, sources = 2, [1, 2]
 
     if parsed.study in ('suite', 'both'):
-        grouped = _run_grouped(sources, trials, parsed.seed, config)
+        grouped = _run_grouped(sources, trials, parsed.seed, config, pipes)
         print('\nScenario suite (infotaxis agent, seeded 20 m x 20 m worlds)')
         print(format_suite_table(grouped))
         print('\nPaper reference (Gaussian-plume environment, infotaxis): '
@@ -1037,7 +1088,7 @@ def main(args=None):
     if parsed.study in ('non-informative', 'both'):
         study = run_non_informative_study(
             n_sources=min(sources), n_trials=trials, base_seed=parsed.seed,
-            config=config)
+            config=config, pipe_segments=pipes)
         print('\nNon-informative path study (risk R1): same worlds, '
               'different trajectories')
         print(format_study_table(study))
@@ -1046,7 +1097,7 @@ def main(args=None):
         print(format_observability_table(study))
 
     if parsed.study == 'well':
-        grouped = _run_grouped(sources, trials, parsed.seed, config)
+        grouped = _run_grouped(sources, trials, parsed.seed, config, pipes)
         print('\nHaptic well observability (Phase C0): when does a pull '
               'appear, and when does it start telling the truth?')
         print(format_well_table(grouped))

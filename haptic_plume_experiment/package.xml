@@ -11,6 +11,11 @@
   <depend>haptic_plume_estimation</depend>
   <depend>haptic_plume_gas_sim</depend>
   <depend>python3-numpy</depend>
+  <depend>python3-yaml</depend>
+  <depend>ament_index_python</depend>
+
+  <!-- obstacles.yaml lives here; the pipe-placement flag reads it. -->
+  <depend>haptic_plume_description</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

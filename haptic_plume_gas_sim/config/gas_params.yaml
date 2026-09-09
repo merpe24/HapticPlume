@@ -17,6 +17,17 @@ gas_field_server:
     n_sources: 1                # number of leaks, >= 1
     seed: 42                    # same seed -> same world AND same noise stream
 
+    # --- Leak placement -----------------------------------------------------
+    # false reproduces Phase A exactly: leaks anywhere in the 18 x 18 m box.
+    # true puts them on the pipe surfaces at flight altitude, which is what a
+    # pipeline inspection actually looks for -- and what removes the plume /
+    # main_run bisection confound from Phase E. Measured performance-neutral
+    # (84% vs 86% success, 0.45 m vs 0.56 m median error, 240 trials each).
+    # Every trial then has the leak inside the PRF keep-out, i.e. the R2/D4
+    # well-versus-repulsion case on every run rather than 5% of them.
+    leaks_on_pipes: false
+    obstacles_file: ""          # empty -> haptic_plume_description default
+
     # --- Sensor chain (Phase A validated) -----------------------------------
     tau_rise: 3.0               # [s] rise time constant, paper Eq. (24)
     tau_rec: 8.0                # [s] recovery constant; real MOX sensors recover slowly

@@ -39,11 +39,20 @@ Publishing Topics:
 Services:
     /hp/set_scenario (haptic_plume_interfaces/SetScenario): Rebuild the world from a seed
 
+ROS Parameters:
+    leaks_on_pipes (bool): Place leaks on the pipe surfaces instead of anywhere
+        in the room. Off keeps the uniform placement Phase A was validated with.
+    obstacles_file (string): Path to obstacles.yaml when leaks_on_pipes is on;
+        empty resolves the haptic_plume_description default.
+
 :author: premmm
 :date: August 4, 2026
 """
 
 import math
+import os
+
+from ament_index_python.packages import get_package_share_directory
 
 from geometry_msgs.msg import Point
 
@@ -65,6 +74,8 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import ColorRGBA
 
 from visualization_msgs.msg import Marker, MarkerArray
+
+import yaml
 
 # Marker namespaces, so RViz can toggle the two layers independently.
 MARKER_NS_FIELD = 'gas_field'
@@ -89,6 +100,8 @@ class GasFieldServer(Node):
         self.declare_parameter('publish_rate', 20.0)
         self.declare_parameter('n_sources', 1)
         self.declare_parameter('seed', 42)
+        self.declare_parameter('leaks_on_pipes', False)
+        self.declare_parameter('obstacles_file', '')
         self.declare_parameter('tau_rise', 3.0)
         self.declare_parameter('tau_rec', 8.0)
         self.declare_parameter('sigma_noise', 2.0e-3)
@@ -113,6 +126,13 @@ class GasFieldServer(Node):
         self.marker_alpha_gain = self.get_parameter('marker_alpha_gain').value
         self.marker_alpha_min = self.get_parameter('marker_alpha_min').value
         self.marker_airflow_length = self.get_parameter('marker_airflow_length').value
+
+        # Resolved once here rather than per scenario: a missing or malformed
+        # obstacles.yaml must kill the node at start-up, not halfway through a
+        # trial when /hp/set_scenario is called.
+        self.pipe_segments = self._load_pipe_segments(
+            self.get_parameter('obstacles_file').value) \
+            if self.get_parameter('leaks_on_pipes').value else None
 
         if self.publish_rate <= 0.0:
             raise ValueError('publish_rate must be positive')
@@ -164,6 +184,38 @@ class GasFieldServer(Node):
         self.get_logger().info(
             f'gas_field_server up at {self.publish_rate:.1f} Hz (sensor dt {self.dt:.4f} s)')
 
+    def _load_pipe_segments(self, obstacles_file):
+        """
+        Read the capsules leaks may sit on, from the collision authority itself.
+
+        obstacle_field.cpp clamps against this same YAML and Phase C's PRF reads
+        it too (decision D1), so a leak can never end up on a pipe the rest of
+        the system does not know about.
+
+        :param obstacles_file: path to obstacles.yaml; empty resolves the
+            haptic_plume_description default
+        :return: [(p0, p1, radius)] capsules
+        :rtype: list
+        """
+        if not obstacles_file:
+            obstacles_file = os.path.join(
+                get_package_share_directory('haptic_plume_description'),
+                'config', 'obstacles.yaml')
+
+        with open(obstacles_file) as handle:
+            document = yaml.safe_load(handle)
+
+        segments = [
+            (np.asarray(segment['p0'], dtype=float),
+             np.asarray(segment['p1'], dtype=float),
+             float(segment['radius']))
+            for segment in document['segments']
+        ]
+        self.get_logger().info(
+            f'leaks_on_pipes: sources will sit on {len(segments)} capsule(s) '
+            f'from {obstacles_file}')
+        return segments
+
     def _apply_scenario(self, n_sources, seed):
         """
         Rebuild the world, the sensor, and the markers from one seed.
@@ -177,7 +229,8 @@ class GasFieldServer(Node):
         :return: the scenario now in force
         :rtype: haptic_plume_core.scenario.Scenario
         """
-        scenario = random_scenario(int(n_sources), int(seed))
+        scenario = random_scenario(int(n_sources), int(seed),
+                                   pipe_segments=self.pipe_segments)
 
         # Seeding the sensor stream from the scenario seed is exactly what the
         # Phase A trial loop does (eval_estimator.py:146), so a live run of

@@ -9,6 +9,11 @@
 
   <depend>haptic_plume_core</depend>
   <depend>python3-numpy</depend>
+  <depend>python3-yaml</depend>
+  <depend>ament_index_python</depend>
+
+  <!-- obstacles.yaml lives here; leaks_on_pipes reads it at start-up. -->
+  <depend>haptic_plume_description</depend>
 
   <depend>rclcpp</depend>
   <depend>haptic_plume_interfaces</depend>
