@@ -34,7 +34,7 @@ Usage::
 """
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import permutations
 import os
 
@@ -42,6 +42,12 @@ from ament_index_python.packages import get_package_share_directory
 
 from haptic_plume_core.scenario import random_scenario
 
+from haptic_plume_estimation.agreement_gate import (
+    AGREEMENT_M,
+    AgreementGate,
+    DEFAULT_N_TWINS,
+    twin_seeds,
+)
 from haptic_plume_estimation.consume import ConsumedSet, should_consume
 from haptic_plume_estimation.info_gain import best_waypoint, candidate_waypoints
 from haptic_plume_estimation.particle_filter import (
@@ -60,6 +66,15 @@ from haptic_plume_gas_sim.sensor_model import FirstOrderSensor, GasField, GasSen
 import numpy as np
 
 import yaml
+
+# The live drone node's clamp (drone_params.yaml): Holybro X500 V2 collision
+# radius, and enough passes to clear main_run and riser where they meet.
+DRONE_RADIUS = 0.377
+CLAMP_PASSES = 4
+
+# A declaration within this distance of the leak counts as right: Neumann's
+# Sec. 5 criterion, and the one the R1 gate study scored against.
+DECLARATION_OK_M = 1.5
 
 WELL_BEARING_TOL_DEG = 10.0
 WELL_GATES = ('tracking', 'converging')
@@ -90,6 +105,17 @@ class EvalConfig:
     """
 
     dt: float = 0.2                 # estimator period [s] (5 Hz)
+    # The live node compensates every 20 Hz sample and filters every 4th, and
+    # the compensator's noise-driven branch flip scales with 1/dt, so a 5 Hz
+    # loop is a different system (CLAUDE.md, C2). 1 and None keep Phase A.
+    pf_decimation: int = 1              # sensor samples per filter update
+    compensator_tau_rec: float = None   # [s] None -> tau_rec; the node runs 3.0
+    # What else the live system does. All off by default, so Phase A stands.
+    drone_radius: float = None          # [m] clamp off obstacles like the drone node
+    collision_margin: float = 0.05      # [m] drone_params.yaml standoff past contact
+    stop_at_declaration: bool = False   # end the trial on the first consume (O3)
+    n_twins: int = 0                    # agreement-gate twins; 0 declares on sigma
+    agreement_m: float = AGREEMENT_M    # [m] twins must agree this closely
     speed: float = 1.0              # drone ground speed [m/s]
     max_steps: int = 1200           # 240 s of flight
     n_particles: int = 1500
@@ -122,6 +148,31 @@ class EvalConfig:
         return PlumeFilterConfig(n_particles=self.n_particles, q=self.q,
                                  sigma_c=self.sigma_c,
                                  d_cluster=self.d_cluster)
+
+    @property
+    def sensor_dt(self):
+        """Sensor and compensator period [s], i.e. dt split by the decimation."""
+        return self.dt / self.pf_decimation
+
+    @classmethod
+    def live(cls, **overrides):
+        """
+        Build the chain the way plume_estimator_node runs it.
+
+        The drone node's collision radius is part of this configuration, so
+        run_trial must also be given the obstacles to clamp against.
+
+        :param overrides: any other EvalConfig field, e.g. max_steps
+        :return: 20 Hz compensation, 5 Hz filter, compensator tau_rec 3.0, one
+            leak that ends the trial, the agreement gate and the obstacle clamp
+        :rtype: EvalConfig
+        """
+        settings = {'pf_decimation': 4, 'compensator_tau_rec': 3.0,
+                    'max_sources': 1, 'drone_radius': DRONE_RADIUS,
+                    'stop_at_declaration': True,
+                    'n_twins': DEFAULT_N_TWINS}
+        settings.update(overrides)
+        return cls(**settings)
 
 
 @dataclass
@@ -180,6 +231,9 @@ class TrialResult:
     final_sigma_norm: float = float('nan')
     path_length_m: float = 0.0
     steps: int = 0
+    # Declarations the agreement gate refused because the twins disagreed;
+    # each one reset every filter. Always 0 when config.n_twins is 0.
+    declarations_withheld: int = 0
     consumed_positions: np.ndarray = field(
         default_factory=lambda: np.empty((0, 3)))
     # Cross-axis path spread at each consume, kept raw rather than
@@ -199,7 +253,8 @@ class TrialResult:
         return self.n_found == self.n_true
 
 
-def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
+def run_trial(scenario, config=None, seed=0, planner='infotaxis',
+              obstacles=None):
     """
     Fly one scenario headless and return its metrics.
 
@@ -208,107 +263,159 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis'):
     :param seed: seed for the sensor noise and the particle filter
     :param planner: name from PLANNERS — 'infotaxis' is the paper's agent, the
         rest are the non-informative human-like paths of the risk R1 study
+    :param obstacles: [(p0, p1, radius)] capsules to slide off, as
+        load_pipe_segments returns them; required when config.drone_radius is set
     :return: the trial's metrics
     :rtype: TrialResult
     """
     config = config if config is not None else EvalConfig()
     if planner not in PLANNERS:
         raise ValueError(f'unknown planner {planner!r}; have {sorted(PLANNERS)}')
+    clamping = config.drone_radius is not None
+    if clamping and obstacles is None:
+        raise ValueError('config.drone_radius is set but no obstacles were '
+                         'given to clamp against')
 
     sensor_rng = np.random.default_rng(seed)
     filter_rng = np.random.default_rng(seed + 10_000)
 
+    sensor_dt = config.sensor_dt
+    compensator_tau_rec = (config.tau_rec if config.compensator_tau_rec is None
+                           else config.compensator_tau_rec)
     field_truth = GasField(scenario.alphas)
     sensor = GasSensor(
-        FirstOrderSensor(config.tau_rise, config.tau_rec, config.dt),
+        FirstOrderSensor(config.tau_rise, config.tau_rec, sensor_dt),
         sensor_rng, sigma_noise=config.sigma_noise,
         sigma_fluct=config.sigma_fluct)
     compensator = InverseFeedforwardCompensator(
-        config.tau_rise, config.tau_rec, config.dt, config.gamma)
+        config.tau_rise, compensator_tau_rec, sensor_dt, config.gamma)
     pf = PlumeParticleFilter(config.filter_config(), filter_rng)
+    # Twins seeded from the primary's seed, as plume_estimator_node seeds them.
+    gate = (AgreementGate(config.filter_config(),
+                          twin_seeds(seed + 10_000, config.n_twins),
+                          config.agreement_m)
+            if config.n_twins > 0 else None)
     consumed = ConsumedSet()
 
     position = scenario.start_position.copy()
+    if clamping:
+        _clamp_to_free_space(position, obstacles, config.drone_radius,
+                             config.collision_margin, scenario.search_area)
     target = position.copy()
     plan_state = {}
     n_diverged = 0
+    n_withheld = 0
     path_length = 0.0
     last_consume_step = None
+    last_step = -1
     path_cross = []
     visited = []
-    trackers = [_WellTracker(well_target, gate, config.dt, tol)
+    trackers = [_WellTracker(well_target, gate_rule, config.dt, tol)
                 for well_target in WELL_TARGETS
-                for gate in WELL_GATES
+                for gate_rule in WELL_GATES
                 for tol in WELL_TOLERANCES_DEG]
     unfound = _unfound_sources(scenario.source_positions, consumed.positions,
                                config.d_cluster)
 
-    for step in range(config.max_steps):
-        visited.append(position.copy())
+    # One pass per SENSOR sample, as the live chain runs. The filter, the well
+    # trackers and the consume test run on every pf_decimation-th sample only,
+    # so `step` still counts filter updates. pf_decimation = 1 is Phase A.
+    plan_every = config.plan_every * config.pf_decimation
+    for sample in range(config.max_steps * config.pf_decimation):
         # --- sense: truth -> lagged, noisy measurement -> compensated ---
         c_true = float(field_truth.concentration(*position))
         z_ff = compensator.update(sensor.measure(c_true))
 
-        # --- believe: subtract what is already consumed, then update ---
-        m_hat = float(consumed.concentration(*position))
-        status = pf.update(position, z_ff, m_hat=m_hat)
-        n_diverged += status == STATUS_DIVERGED
+        if (sample + 1) % config.pf_decimation == 0:
+            step = sample // config.pf_decimation
+            last_step = step
+            visited.append(position.copy())
 
-        # --- score the well: what would the operator's hand be feeling? ---
-        # Read before the consume block, exactly as path_cross is: after
-        # pf.reset() this measures a fresh uniform prior. `target` is last
-        # step's waypoint, which is exactly what a live composer renders --
-        # the suggester publishes at 2 Hz and the composer holds the last one.
-        bearing_error = {
-            'belief': _well_bearing_error(position, pf.mne_position, unfound),
-            'waypoint': _well_bearing_error(position, target, unfound),
-        }
-        for tracker in trackers:
-            tracker.step(step, status, bearing_error[tracker.target])
+            # --- believe: subtract what is already consumed, then update ---
+            m_hat = float(consumed.concentration(*position))
+            status = pf.update(position, z_ff, m_hat=m_hat)
+            if gate is not None:
+                gate.update(position, z_ff, m_hat=m_hat)
+            n_diverged += status == STATUS_DIVERGED
 
-        # --- consume: a tight enough belief becomes a localized source ---
-        if (should_consume(pf.sigma_position_norm, config.sigma_c)
-                and len(consumed) < config.max_sources):
-            # Read before pf.reset() below, or this measures a fresh prior.
-            path_cross.append(_cross_axis_spread(visited, pf.mmse[3]))
-            consumed.push(pf.mmse)
-            consumed.merge(config.d_cluster)
-            last_consume_step = step
-            pf.reset()
-            # Scope the path window to this belief. Without the clear, source
-            # two onward is judged on flying done for source one, and the gate
-            # waves everything through. Mirrors pf.reset() exactly.
-            visited.clear()
-
-            # Same scoping for the well: a consume ends one hunt, and the
-            # retarget that follows starts the next. Close before recomputing
-            # unfound below — the pre-consume value is what says whether this
-            # hunt had a real leak to be right about.
+            # --- score the well: what would the operator's hand be feeling? ---
+            # Read before the consume block, exactly as path_cross is: after
+            # pf.reset() this measures a fresh uniform prior. `target` is last
+            # step's waypoint, which is exactly what a live composer renders --
+            # the suggester publishes at 2 Hz and the composer holds the last one.
+            bearing_error = {
+                'belief': _well_bearing_error(position, pf.mne_position, unfound),
+                'waypoint': _well_bearing_error(position, target, unfound),
+            }
             for tracker in trackers:
-                tracker.close(step, len(unfound) > 0)
-            unfound = _unfound_sources(scenario.source_positions,
-                                       consumed.positions, config.d_cluster)
+                tracker.step(step, status, bearing_error[tracker.target])
+
+            # --- consume: a tight enough belief becomes a localized source ---
+            if (should_consume(pf.sigma_position_norm, config.sigma_c)
+                    and len(consumed) < config.max_sources):
+                if gate is not None and not gate.agrees(pf):
+                    # The twins disagree, so the tight belief is resampling
+                    # luck, not evidence. Restart every filter and keep flying:
+                    # twins left running deplete onto the same wrong spot and
+                    # then agree on it (agreement_gate.py). The leak is still
+                    # unfound, so the well's hunt stays open.
+                    n_withheld += 1
+                    pf.reset()
+                    gate.reset()
+                    visited.clear()
+                else:
+                    # Read before pf.reset() below, or this measures a fresh prior.
+                    path_cross.append(_cross_axis_spread(visited, pf.mmse[3]))
+                    consumed.push(pf.mmse)
+                    consumed.merge(config.d_cluster)
+                    last_consume_step = step
+                    pf.reset()
+                    if gate is not None:
+                        gate.reset()
+                    # Scope the path window to this belief. Without the clear, source
+                    # two onward is judged on flying done for source one, and the gate
+                    # waves everything through. Mirrors pf.reset() exactly.
+                    visited.clear()
+
+                    # Same scoping for the well: a consume ends one hunt, and the
+                    # retarget that follows starts the next. Close before recomputing
+                    # unfound below — the pre-consume value is what says whether this
+                    # hunt had a real leak to be right about.
+                    for tracker in trackers:
+                        tracker.close(step, len(unfound) > 0)
+                    unfound = _unfound_sources(scenario.source_positions,
+                                               consumed.positions,
+                                               config.d_cluster)
+                    if config.stop_at_declaration:
+                        break
 
         # --- plan and move: kinematic x_dot = v, paper Eq. (20) ---
-        if step % config.plan_every == 0:
+        if sample % plan_every == 0:
             target = PLANNERS[planner](position, pf, scenario, config,
-                                       step, plan_state)
-        moved = _step_towards(position, target, config.speed * config.dt,
-                              scenario.search_area)
-        path_length += moved
+                                       sample // config.pf_decimation,
+                                       plan_state)
+        before = position.copy()
+        _step_towards(position, target, config.speed * sensor_dt,
+                      scenario.search_area)
+        if clamping:
+            _clamp_to_free_space(position, obstacles, config.drone_radius,
+                                 config.collision_margin, scenario.search_area)
+        path_length += float(np.linalg.norm(position - before))
 
     # The trial almost always ends mid-hunt; close_if_open skips the empty
-    # hunt left behind when the very last step happened to consume.
+    # hunt left behind when the last step consumed, including a trial that
+    # stopped at its declaration.
     for tracker in trackers:
-        tracker.close_if_open(config.max_steps - 1, len(unfound) > 0)
+        tracker.close_if_open(last_step, len(unfound) > 0)
 
     return _summarize(scenario, planner, seed, config, consumed, pf,
                       n_diverged, path_length, last_consume_step, path_cross,
-                      trackers)
+                      trackers, last_step + 1, n_withheld)
 
 
 def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
-               path_length, last_consume_step, path_cross, trackers):
+               path_length, last_consume_step, path_cross, trackers, steps,
+               n_withheld):
     """
     Turn the end state of a trial into a TrialResult.
 
@@ -323,6 +430,9 @@ def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
     :param last_consume_step: step index of the final consume, or None
     :param path_cross: cross-axis path spreads recorded at each consume [m]
     :param trackers: the well trackers, already closed
+    :param steps: filter updates actually run; fewer than max_steps when the
+        trial stopped at its declaration
+    :param n_withheld: declarations the agreement gate refused
     :return: the assembled result
     :rtype: TrialResult
     """
@@ -332,11 +442,12 @@ def _summarize(scenario, planner, seed, config, consumed, pf, n_diverged,
         seed=seed,
         n_true=scenario.n_sources,
         n_found=len(consumed),
-        diverged_fraction=n_diverged / config.max_steps,
+        diverged_fraction=n_diverged / steps,
         final_status=pf.status,
         final_sigma_norm=pf.sigma_position_norm,
         path_length_m=path_length,
-        steps=config.max_steps,
+        steps=steps,
+        declarations_withheld=n_withheld,
         consumed_positions=consumed.positions,
         path_cross_at_consume=np.asarray(path_cross, dtype=float),
         well_hunts={t.key: t.hunts() for t in trackers},
@@ -477,14 +588,70 @@ PLANNERS = {
 }
 
 
+def _clamp_to_free_space(position, obstacles, drone_radius, margin, search_area,
+                         passes=CLAMP_PASSES):
+    """
+    Slide the drone out of every pipe and back inside the room, in place.
+
+    A copy of obstacle_field.cpp's clamp_to_free_space, which the live drone
+    node runs. Each pass pushes the position out along the surface normal by
+    exactly the shortfall, so motion along a pipe survives and the drone slides,
+    then insets the room walls by the drone radius. The floor clamp is left out
+    because flight is at fixed altitude, far above min_altitude.
+
+    :param position: (3,) drone position, modified in place [m]
+    :param obstacles: [(p0, p1, radius)] capsules, as load_pipe_segments returns
+    :param drone_radius: the drone is treated as a sphere of this radius [m]
+    :param margin: extra standoff kept beyond bare contact [m]
+    :param search_area: (2, 2) room extent [m]
+    :param passes: clamp iterations; main_run and riser share an endpoint
+    :return: the same position array
+    :rtype: numpy.ndarray
+    """
+    required = drone_radius + margin
+    for _ in range(passes):
+        moved = False
+        for p0, p1, radius in obstacles:
+            axis = p1 - p0
+            t = min(max(float((position - p0) @ axis) / float(axis @ axis), 0.0),
+                    1.0)
+            offset = position - (p0 + t * axis)
+            distance = float(np.linalg.norm(offset))
+            if distance < 1e-9:
+                # On the axis itself offset/distance is NaN; any perpendicular
+                # will do, exactly as obstacle_field.cpp falls back.
+                normal = np.cross(axis, np.array([0.0, 0.0, 1.0]))
+                if float(np.linalg.norm(normal)) < 1e-9:
+                    normal = np.array([1.0, 0.0, 0.0])
+                normal = normal / float(np.linalg.norm(normal))
+                clearance = -radius
+            else:
+                normal = offset / distance
+                clearance = distance - radius
+            if clearance < required:
+                position += normal * (required - clearance)
+                moved = True
+        for index in range(2):
+            low = search_area[index, 0] + drone_radius
+            high = search_area[index, 1] - drone_radius
+            clipped = min(max(float(position[index]), low), high)
+            if clipped != position[index]:
+                position[index] = clipped
+                moved = True
+        if not moved:
+            break
+    return position
+
+
 def load_pipe_segments(obstacles_file=None):
     """
     Read the capsules leaks may sit on, from the live system's own geometry.
 
     Deliberately the same obstacles.yaml the kinematics clamp and Phase C's PRF
     read, so a headless study cannot drift from what the drone actually flies
-    around. NOTE the trial loop still models no obstacles: placing leaks on the
-    pipes does not make the drone avoid them, so time-to-declare stays optimistic.
+    around. run_trial slides the drone off these capsules when
+    config.drone_radius is set; without it the drone flies straight through
+    them and time-to-declare stays optimistic.
 
     :param obstacles_file: path to obstacles.yaml; None resolves the
         haptic_plume_description default
@@ -506,7 +673,7 @@ def load_pipe_segments(obstacles_file=None):
 
 
 def run_suite(n_sources_list=(1, 2, 3), n_trials=10, base_seed=0, config=None,
-              planner='infotaxis', pipe_segments=None):
+              planner='infotaxis', pipe_segments=None, obstacles=None):
     """
     Run the seeded scenario suite the Phase A definition of done is scored on.
 
@@ -517,6 +684,7 @@ def run_suite(n_sources_list=(1, 2, 3), n_trials=10, base_seed=0, config=None,
     :param planner: planner name to fly with
     :param pipe_segments: [(p0, p1, radius)] to place leaks on; None keeps the
         uniform placement the Phase A baseline was measured with
+    :param obstacles: capsules to slide off when config.drone_radius is set
     :return: list of TrialResult
     :rtype: list
     """
@@ -528,19 +696,21 @@ def run_suite(n_sources_list=(1, 2, 3), n_trials=10, base_seed=0, config=None,
             scenario = random_scenario(n_sources, seed,
                                        pipe_segments=pipe_segments)
             results.append(run_trial(scenario, config, seed=seed,
-                                     planner=planner))
+                                     planner=planner, obstacles=obstacles))
     return results
 
 
-def _run_grouped(sources, n_trials, base_seed, config, pipe_segments=None):
+def _run_grouped(sources, n_trials, base_seed, config, pipe_segments=None,
+                 obstacles=None):
     """Run the suite once per source count, keyed by count for the tables."""
     return {str(n): run_suite([n], n_trials=n_trials, base_seed=base_seed,
-                              config=config, pipe_segments=pipe_segments)
+                              config=config, pipe_segments=pipe_segments,
+                              obstacles=obstacles)
             for n in sources}
 
 
 def run_non_informative_study(n_sources=2, n_trials=5, base_seed=0,
-                              config=None, pipe_segments=None):
+                              config=None, pipe_segments=None, obstacles=None):
     """
     Compare informative and non-informative trajectories — the risk R1 study.
 
@@ -553,6 +723,7 @@ def run_non_informative_study(n_sources=2, n_trials=5, base_seed=0,
     :param config: EvalConfig; None uses the defaults
     :param pipe_segments: [(p0, p1, radius)] to place leaks on; None keeps the
         uniform placement the Phase A baseline was measured with
+    :param obstacles: capsules to slide off when config.drone_radius is set
     :return: dict mapping planner name to its list of TrialResult
     :rtype: dict
     """
@@ -564,8 +735,75 @@ def run_non_informative_study(n_sources=2, n_trials=5, base_seed=0,
                                    pipe_segments=pipe_segments)
         for name in PLANNERS:
             results[name].append(
-                run_trial(scenario, config, seed=seed, planner=name))
+                run_trial(scenario, config, seed=seed, planner=name,
+                          obstacles=obstacles))
     return results
+
+
+def run_gate_study(n_trials=30, base_seed=0, config=None, pipe_segments=None,
+                   obstacles=None):
+    """
+    Fly the same one-leak worlds with the agreement gate off and on.
+
+    The in-tree record of the 2026-09-13 risk R1 study, so the result survives
+    the scratchpad it was first measured in. Seeds follow run_suite's scheme.
+
+    :param n_trials: worlds per planner
+    :param base_seed: first seed; world i uses base_seed + 1000 + i
+    :param config: EvalConfig to fly, normally EvalConfig.live(); the gate-off
+        runs are the same configuration with n_twins = 0
+    :param pipe_segments: [(p0, p1, radius)] to place leaks on; None = uniform
+    :param obstacles: capsules to slide off when config.drone_radius is set
+    :return: dict mapping (planner, 'off' or 'on') to its list of TrialResult
+    :rtype: dict
+    """
+    config = config if config is not None else EvalConfig()
+    gate_on = (config if config.n_twins > 0
+               else replace(config, n_twins=DEFAULT_N_TWINS))
+    gate_off = replace(config, n_twins=0)
+    results = {}
+    for name in PLANNERS:
+        for label, variant in (('off', gate_off), ('on', gate_on)):
+            rows = []
+            for trial in range(n_trials):
+                seed = base_seed + 1000 + trial
+                scenario = random_scenario(1, seed, pipe_segments=pipe_segments)
+                rows.append(run_trial(scenario, variant, seed=seed,
+                                      planner=name, obstacles=obstacles))
+            results[(name, label)] = rows
+    return results
+
+
+def format_gate_table(results):
+    """
+    Render the gate study: what each flight path declared, gate off and on.
+
+    ok is a declaration within DECLARATION_OK_M of the leak; wrong is one
+    further away, the confident wrong answer risk R1 is about. Both are shares
+    of all trials, so ok % + wrong % = declared %.
+
+    :param results: dict from run_gate_study
+    :return: the printable table
+    :rtype: str
+    """
+    lines = [
+        'planner     gate  trials  declared %  ok %  wrong %  withheld  t p50 s',
+        '----------  ----  ------  ----------  ----  -------  --------  -------',
+    ]
+    for (name, label), trials in results.items():
+        n = max(len(trials), 1)
+        declared = [r for r in trials if r.n_found > 0]
+        ok = sum(r.localization_error_m <= DECLARATION_OK_M for r in declared)
+        withheld = (float(np.mean([r.declarations_withheld for r in trials]))
+                    if trials else float('nan'))
+        times = [r.localization_time_s for r in declared]
+        t50 = float(np.median(times)) if times else float('nan')
+        lines.append(
+            f'{name:<10}  {label:<4}  {len(trials):>6}  '
+            f'{100.0 * len(declared) / n:>10.0f}  {100.0 * ok / n:>4.0f}  '
+            f'{100.0 * (len(declared) - ok) / n:>7.0f}  {withheld:>8.1f}  '
+            f'{t50:>7.1f}')
+    return '\n'.join(lines)
 
 
 def summarize(results):
@@ -1046,7 +1284,8 @@ def main(args=None):
     parser = argparse.ArgumentParser(
         description='Headless evaluation of the MultiPLE estimator (Phase A)')
     parser.add_argument('--study', default='both',
-                        choices=('suite', 'non-informative', 'well', 'both'),
+                        choices=('suite', 'non-informative', 'well', 'gate',
+                                 'both'),
                         help='which study to run')
     parser.add_argument('--trials', type=int, default=10,
                         help='trials per scenario group')
@@ -1061,17 +1300,28 @@ def main(args=None):
                         help='place leaks on the obstacles.yaml pipe surfaces '
                              'instead of anywhere in the room')
     parser.add_argument('--obstacles-file', default=None,
-                        help='obstacles.yaml to read with --leaks-on-pipes; '
-                             'defaults to the haptic_plume_description copy')
+                        help='obstacles.yaml for --leaks-on-pipes and '
+                             '--live-rate; defaults to the '
+                             'haptic_plume_description copy')
+    parser.add_argument('--live-rate', action='store_true',
+                        help='run the chain as the live system does: 20 Hz '
+                             'compensation, 5 Hz filter, one leak, agreement '
+                             'gate, drone clamped off the pipes')
     parsed = parser.parse_args(args)
 
-    pipes = (load_pipe_segments(parsed.obstacles_file)
-             if parsed.leaks_on_pipes else None)
+    segments = (load_pipe_segments(parsed.obstacles_file)
+                if parsed.leaks_on_pipes or parsed.live_rate else None)
+    pipes = segments if parsed.leaks_on_pipes else None
+    obstacles = segments if parsed.live_rate else None
     if pipes is not None:
         print(f'Leaks placed on {len(pipes)} pipe surface(s) at flight '
               f'altitude — NOT the Phase A baseline placement.')
 
-    config = EvalConfig(max_steps=parsed.steps)
+    config = (EvalConfig.live(max_steps=parsed.steps) if parsed.live_rate
+              else EvalConfig(max_steps=parsed.steps))
+    if parsed.live_rate:
+        print('Live-rate chain (20 Hz compensation, 5 Hz filter, one leak, '
+              'agreement gate, obstacle clamp) -- NOT the Phase A baseline.')
     trials = parsed.trials
     sources = parsed.sources
     if parsed.quick:
@@ -1079,7 +1329,8 @@ def main(args=None):
         trials, sources = 2, [1, 2]
 
     if parsed.study in ('suite', 'both'):
-        grouped = _run_grouped(sources, trials, parsed.seed, config, pipes)
+        grouped = _run_grouped(sources, trials, parsed.seed, config, pipes,
+                               obstacles)
         print('\nScenario suite (infotaxis agent, seeded 20 m x 20 m worlds)')
         print(format_suite_table(grouped))
         print('\nPaper reference (Gaussian-plume environment, infotaxis): '
@@ -1088,7 +1339,7 @@ def main(args=None):
     if parsed.study in ('non-informative', 'both'):
         study = run_non_informative_study(
             n_sources=min(sources), n_trials=trials, base_seed=parsed.seed,
-            config=config, pipe_segments=pipes)
+            config=config, pipe_segments=pipes, obstacles=obstacles)
         print('\nNon-informative path study (risk R1): same worlds, '
               'different trajectories')
         print(format_study_table(study))
@@ -1096,8 +1347,17 @@ def main(args=None):
               'last reset) — INSTRUMENTATION, not a working gate')
         print(format_observability_table(study))
 
+    if parsed.study == 'gate':
+        study = run_gate_study(n_trials=trials, base_seed=parsed.seed,
+                               config=config, pipe_segments=pipes,
+                               obstacles=obstacles)
+        print('\nAgreement gate (risk R1): the same one-leak worlds, declared '
+              'on sigma alone (off) and only when the twins agree (on)')
+        print(format_gate_table(study))
+
     if parsed.study == 'well':
-        grouped = _run_grouped(sources, trials, parsed.seed, config, pipes)
+        grouped = _run_grouped(sources, trials, parsed.seed, config, pipes,
+                               obstacles)
         print('\nHaptic well observability (Phase C0): when does a pull '
               'appear, and when does it start telling the truth?')
         print(format_well_table(grouped))

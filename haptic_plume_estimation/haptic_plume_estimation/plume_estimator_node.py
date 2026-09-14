@@ -20,6 +20,12 @@ No /hp/odom subscription: GasConcentration already carries the sample position,
 so measurement and pose arrive married in one message. That is why the field
 exists; do not add a message_filters sync against odom.
 
+DECLARATION GATE -- risk R1. sigma < sigma_c alone cannot tell evidence from
+resampling depletion, so n_twins independently seeded filters run beside the
+primary on the same samples, and a declaration goes out only when all their MNE
+positions agree within agreement_m. When they disagree every filter resets and
+the search goes on. agreement_gate.py carries the measured numbers.
+
 Subscription Topics:
     /hp/gas/measurement (haptic_plume_interfaces/GasConcentration): Lagged, noisy sample
 
@@ -44,6 +50,8 @@ ROS Parameters:
     d_cluster [m]: Agglomerative merge distance of Algorithm 1
     max_sources [-]: Refuse to keep consuming past this many
     pf_seed [-]: Particle filter Generator seed, logged at startup for D7 replay
+    n_twins [-]: Twin filters a declaration must agree with; 0 declares on sigma alone
+    agreement_m [m]: Largest MNE disagreement among the filters that still declares
     tau_rise [s]: Sensor rise time constant, Eq. (24)
     tau_rec [s]: Sensor recovery time constant
     gamma [rad/s]: Compensator low-pass coefficient, Eq. (27)
@@ -54,6 +62,8 @@ ROS Parameters:
 """
 
 from geometry_msgs.msg import Point
+
+from haptic_plume_estimation.agreement_gate import AgreementGate, twin_seeds
 
 from haptic_plume_estimation.clustering import cluster_labels
 
@@ -122,10 +132,12 @@ class PlumeEstimator(Node):
         self.declare_parameter('q', 0.1)
         self.declare_parameter('sigma_c', 0.5)
         self.declare_parameter('d_cluster', 1.8)
-        self.declare_parameter('max_sources', 6)
+        self.declare_parameter('max_sources', 1)
         self.declare_parameter('pf_seed', 0)
+        self.declare_parameter('n_twins', 3)
+        self.declare_parameter('agreement_m', 1.5)
         self.declare_parameter('tau_rise', 3.0)
-        self.declare_parameter('tau_rec', 8.0)
+        self.declare_parameter('tau_rec', 3.0)
         self.declare_parameter('gamma', 5.0)
         self.declare_parameter('map_frame', 'map')
 
@@ -138,6 +150,8 @@ class PlumeEstimator(Node):
         self.max_sources = self.get_parameter('max_sources').value
         self.map_frame = self.get_parameter('map_frame').value
         self.pf_seed = self.get_parameter('pf_seed').value
+        self.n_twins = self.get_parameter('n_twins').value
+        self.agreement_m = self.get_parameter('agreement_m').value
 
         # Estimator chain
         # PlumeFilterConfig's dataclass defaults are the PAPER's: n_particles
@@ -154,6 +168,7 @@ class PlumeEstimator(Node):
                                       np.random.default_rng(self.pf_seed))
         self.consumed = ConsumedSet()
         self.consume_sigmas = []
+        self.gate = self.build_gate()
 
         # The compensator inverts the sensor's own discretization, so it is
         # built with the SENSOR's dt and update() is always called with that
@@ -209,12 +224,22 @@ class PlumeEstimator(Node):
         self.publish_consumed()
 
         # D7: to replay headless trial s, pass pf_seed = s + 10000 --
-        # eval_estimator.py:214 derives its filter stream that way.
+        # eval_estimator.run_trial seeds its filter that way, and the twins
+        # follow from pf_seed on their own.
         self.get_logger().info(
             f'plume_estimator up: pf_seed={self.pf_seed}, '
             f'{self.filter_config.n_particles} particles, sigma_c={self.sigma_c} m, '
             f'compensating at {self.sensor_rate} Hz, filtering at '
-            f'{self.sensor_rate / self.pf_decimation} Hz')
+            f'{self.sensor_rate / self.pf_decimation} Hz, declaration gate '
+            f'{self.n_twins} twins within {self.agreement_m} m')
+
+    def build_gate(self):
+        """Build the declaration gate's twins from pf_seed, or None when n_twins is 0."""
+        if self.n_twins <= 0:
+            return None
+        return AgreementGate(self.filter_config,
+                             twin_seeds(self.pf_seed, self.n_twins),
+                             self.agreement_m)
 
     def measurement_callback(self, msg):
         """Compensate every sample, feed the filter every Nth, and test for a consume."""
@@ -232,11 +257,17 @@ class PlumeEstimator(Node):
         position = np.array([msg.position.x, msg.position.y, msg.position.z])
         m_hat = float(self.consumed.concentration(*position))
         self.pf.update(position, z_ff, m_hat=m_hat)
+        if self.gate is not None:
+            self.gate.update(position, z_ff, m_hat=m_hat)
         self.update_count += 1
 
         if (should_consume(self.pf.sigma_position_norm, self.sigma_c)
                 and len(self.consumed) < self.max_sources):
-            self.do_consume(msg)
+            spread = self.gate.spread(self.pf) if self.gate is not None else 0.0
+            if self.gate is None or spread <= self.agreement_m:
+                self.do_consume(msg, spread)
+            else:
+                self.withhold_declaration(spread)
 
         # pf.status is read AFTER the consume block on purpose: pf.reset() has
         # run by then, so the status always describes the same belief as the
@@ -247,7 +278,20 @@ class PlumeEstimator(Node):
         if self.update_count % self.particles_every == 0:
             self.publish_particles(msg)
 
-    def do_consume(self, msg):
+    def withhold_declaration(self, spread):
+        """Refuse a declaration the twins disagree on, and restart every filter."""
+        # The tight belief is resampling luck, not evidence: filters fed the
+        # same samples ended up in different places. Twins left running would
+        # deplete onto the same wrong spot and then agree on it, so all restart.
+        # No TaskEvent type exists for this yet, so the composer (C5) must treat
+        # RESET without a preceding SOURCE_CONSUMED as a fade-out (risk R5).
+        self.pf.reset()
+        self.gate.reset()
+        self.get_logger().info(
+            f'declaration withheld: filters disagree by {spread:.2f} m '
+            f'(> {self.agreement_m} m), all filters reset')
+
+    def do_consume(self, msg, spread):
         """Turn a converged belief into a consumed source. The order is load-bearing."""
         alpha = self.pf.mmse
 
@@ -259,7 +303,8 @@ class PlumeEstimator(Node):
         event.header.frame_id = self.map_frame
         event.event_type = TaskEvent.SOURCE_CONSUMED
         event.position = Point(x=float(alpha[0]), y=float(alpha[1]), z=float(alpha[2]))
-        event.detail = f'sigma_position_norm={self.pf.sigma_position_norm:.3f} m'
+        event.detail = (f'sigma_position_norm={self.pf.sigma_position_norm:.3f} m, '
+                        f'twin_spread={spread:.3f} m')
         self.publisher_event.publish(event)
 
         self.consumed.push(alpha)
@@ -279,6 +324,8 @@ class PlumeEstimator(Node):
 
         self.publish_consumed()
         self.pf.reset()
+        if self.gate is not None:
+            self.gate.reset()
 
         self.get_logger().info(
             f'consumed source {len(self.consumed)} at '
@@ -382,8 +429,11 @@ class PlumeEstimator(Node):
             self.pf = PlumeParticleFilter(self.filter_config,
                                           np.random.default_rng(request.pf_seed))
             self.pf_seed = request.pf_seed
+            self.gate = self.build_gate()
         else:
             self.pf.reset()
+            if self.gate is not None:
+                self.gate.reset()
 
         # run_trial builds a fresh compensator per trial, so it never had to
         # reset one; a long-lived node does. Without this, the first samples of

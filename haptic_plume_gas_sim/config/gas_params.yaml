@@ -25,7 +25,7 @@ gas_field_server:
     # (84% vs 86% success, 0.45 m vs 0.56 m median error, 240 trials each).
     # Every trial then has the leak inside the PRF keep-out, i.e. the R2/D4
     # well-versus-repulsion case on every run rather than 5% of them.
-    leaks_on_pipes: false
+    leaks_on_pipes: true
     obstacles_file: ""          # empty -> haptic_plume_description default
 
     # --- Sensor chain (Phase A validated) -----------------------------------

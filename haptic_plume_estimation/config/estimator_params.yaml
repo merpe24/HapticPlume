@@ -33,6 +33,16 @@ plume_estimator:
     max_sources: 1            # single-source frame: one declaration per trial
     pf_seed: 0                # D7: logged at startup; reproduces the belief bit-exactly
 
+    # Declaration gate (risk R1, measured 2026-09-13)
+    # sigma < sigma_c alone cannot tell evidence from resampling depletion;
+    # independently seeded twins can, because only evidence lands them all in
+    # one place. Declare only when every MNE position agrees within
+    # agreement_m, otherwise reset every filter and keep searching. 60
+    # leaks-on-pipes worlds (eval_estimator --study gate --live-rate): wrong
+    # declarations flying down the plume 40% -> 10%, on infotaxis 12% -> 8%.
+    n_twins: 3                # twins seeded pf_seed + 10000 + k; 0 turns the gate off
+    agreement_m: 1.5          # [m] largest disagreement that still declares
+
     # Sensor chain
     # tau_rise MUST equal gas_params.yaml. tau_rec DELIBERATELY DOES NOT: the
     # sensor really recovers at 8.0 s, but tau_for() picks the rise/recovery
