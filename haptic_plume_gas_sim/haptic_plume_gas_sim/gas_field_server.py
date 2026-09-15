@@ -100,7 +100,7 @@ class GasFieldServer(Node):
         self.declare_parameter('publish_rate', 20.0)
         self.declare_parameter('n_sources', 1)
         self.declare_parameter('seed', 42)
-        self.declare_parameter('leaks_on_pipes', False)
+        self.declare_parameter('leaks_on_pipes', True)   # mirrors gas_params.yaml
         self.declare_parameter('obstacles_file', '')
         self.declare_parameter('tau_rise', 3.0)
         self.declare_parameter('tau_rec', 8.0)
