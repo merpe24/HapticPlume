@@ -178,7 +178,12 @@ def main():
     truth = scenario.true_source_positions[0]
     source = np.array([truth.x, truth.y, truth.z])
     theta = scenario.wind_direction
-    node.call(ResetEstimator, '/hp/reset_estimator', ResetEstimator.Request())
+    # clear_consumed, or a second flight can never declare: max_sources is 1, so
+    # the kept source blocks the next consume and its m_hat is subtracted from
+    # every later sample (Eq. 12).
+    reset = ResetEstimator.Request()
+    reset.clear_consumed = True
+    node.call(ResetEstimator, '/hp/reset_estimator', reset)
 
     if node.count_publishers('/hp/cmd_vel') > 1:
         print('WARNING: another node publishes /hp/cmd_vel and will out-vote this '

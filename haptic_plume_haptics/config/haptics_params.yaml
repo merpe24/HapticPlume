@@ -1,0 +1,64 @@
+# Parameters for the haptic cue library (haptic_plume_haptics).
+#
+# These are the C4 starting values. The force magnitudes are a budget, not a measurement:
+# risk R6 allocates PRF 5 N (priority), well 2 N, heaviness 2 N against an 8 N total with
+# PRF-priority rescale, and all arbitration tuning belongs to Phase C. The GEOMETRY, by
+# contrast, is not free -- r_pz is derived from the drone's own clamp values so the risk
+# field and drone_kinematics_node cannot disagree about where a pipe is (D1).
+#
+# Not yet read by any node: C5's force_composer_node is what loads this file.
+
+force_composer:
+  ros__parameters:
+
+    # Parametric risk field (Lam et al. 2009, Eqs. 10-15)
+    # d_min MUST stay positive. At hover the braking and look-ahead terms both vanish and
+    # d_min is the entire field, so zeroing it would make the operator feel nothing until
+    # the kinematic clamp is already sliding (risk R10).
+    # drone_radius, collision_margin, min_altitude and the bounds are repeated from
+    # drone_params.yaml on purpose: PrfConfig embeds the drone's ClampConfig, and a
+    # mismatch here is a D1 violation, not a tuning difference.
+    prf:
+      d_min: 1.50               # [m] field extent beyond the critical region
+      t_ahead: 2.0              # [s] look-ahead; Lam's own value
+      a_max: 3.0                # [m/s^2] MUST match drone_params.yaml max_accel
+      max_force: 5.0            # [N] risk R6's PRF allocation, the priority cue
+      # OFF deliberately. At the fixed 1.0 m altitude the floor is 0.85 m away, inside
+      # d_min, so scoring it renders ~2 N upward constantly, everywhere, all trial -- from
+      # a surface the drone cannot descend toward, since the kinematics node zeroes z.
+      # Phase F's full-3D flight is what turns this back on.
+      include_floor: false      # score the floor at all
+      drone_radius: 0.377       # [m] MUST match drone_params.yaml
+      collision_margin: 0.05    # [m] MUST match drone_params.yaml
+      min_altitude: 0.15        # [m] MUST match drone_params.yaml
+      clamp_max_passes: 4       # main_run and riser share an endpoint
+      search_area_min: [0.0, 0.0]      # [m] MUST match drone_params.yaml
+      search_area_max: [20.0, 20.0]    # [m] MUST match drone_params.yaml
+
+    # Belief well (risk R1's third gate, closed by decision 2026-10-09)
+    # Width and depth scale continuously on BeliefSummary.well_confidence, so there is no
+    # switch-on moment. C0 measured the well at 10 deg as wrong 66.6% of rendered time and
+    # never usable on 40% of hunts; at 30 deg it is wrong 47.4% and never-usable on 0.0%.
+    # width_max is therefore deliberately wide -- it says "roughly that way", which is the
+    # only claim the belief can support early. A confidence of exactly 0.0 renders nothing.
+    well:
+      width_max: 0.785          # [rad] 45 deg, the diffuse end; C0's defensible tolerance
+      width_min: 0.140          # [rad] 8 deg, at confidence 1.0
+      depth_min: 0.30           # [N] felt but not directive
+      depth_max: 2.0            # [N] risk R6's well allocation
+      target_margin: 0.15       # [m] beyond r_pz, so the clamped target is not itself at
+                                # risk 1 and (1 - risk) does not cancel the cue it aims at
+      speed_threshold: 0.05     # [m/s] below this the heading is undefined; matches
+                                # drone_params.yaml yaw_speed_threshold
+
+    # Concentration heaviness (D5)
+    # Global constants ONLY -- per-scenario normalization would make the same concentration
+    # feel different between trials, an uncontrolled confound in a modality experiment.
+    # c_floor is two sigma of the compensated clean-air noise (+/-0.0149 at 20 Hz), so clean
+    # air renders exactly zero instead of a hum. gain then puts the source at the cap.
+    # Resulting force: noise 0.00 N, 9 m downwind (0.05) 0.39 N, 0.116 1.15 N, source 2.0 N.
+    heaviness:
+      gain: 1.15                # [N] scale of the logarithm
+      c_ref: 0.05               # [kg/m^3] concentration scale
+      c_floor: 0.03             # [kg/m^3] 2 sigma of the compensated noise band
+      max_force: 2.0            # [N] risk R6's heaviness allocation
