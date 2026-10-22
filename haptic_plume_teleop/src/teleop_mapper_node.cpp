@@ -3,12 +3,7 @@
  * @brief Maps gamepad axes to world-frame velocity commands for the drone.
  *
  * Every axis and button is looked up through the parameter file, not one index is
- * hardcoded -- the reason this node exists rather than teleop_twist_joy, since the
- * Falcon in Phase D has device-y vertical and device-z pointing at the operator and
- * the same YAML schema has to describe it. The command is published from a TIMER, not
- * the joy callback: at a steady 100 Hz, drone_kinematics_node's 0.3 s staleness gate
- * means exactly one thing, that this node died. /hp/cmd_vel is WORLD-frame
- * (frames.md 6.1) -- no body-frame rotation here, and no yaw command at all.
+ * hardcoded 
  *
  * Subscription Topics:
  *     /joy (sensor_msgs/Joy): Raw device state from joy_node
@@ -18,7 +13,7 @@
  *
  * Parameters:
  *     publish_rate (double): Fixed publish rate [Hz]
- *     deadman_button (int): Button index that must be HELD to command motion
+ *     deadman_button (int): Activation button ;O
  *     joy_timeout (double): No /joy for this long -> command zero [s]
  *     frame_id (string): Frame stamped on the command; world frame per frames.md
  *     axes.<name>.index (int): Joy axis index feeding this command

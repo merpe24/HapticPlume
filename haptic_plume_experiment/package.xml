@@ -7,12 +7,15 @@
   <maintainer email="prem.pannavit@gmail.com">premmm</maintainer>
   <license>Apache-2.0</license>
 
+  <depend>ament_index_python</depend>
   <depend>haptic_plume_core</depend>
   <depend>haptic_plume_estimation</depend>
   <depend>haptic_plume_gas_sim</depend>
+  <depend>haptic_plume_interfaces</depend>
   <depend>python3-numpy</depend>
   <depend>python3-yaml</depend>
-  <depend>ament_index_python</depend>
+  <depend>rclpy</depend>
+  <depend>visualization_msgs</depend>
 
   <!-- obstacles.yaml lives here; the pipe-placement flag reads it. -->
   <depend>haptic_plume_description</depend>

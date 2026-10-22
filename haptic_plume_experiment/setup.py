@@ -26,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'eval_estimator = haptic_plume_experiment.eval_estimator:main',
+            'viz_gate_node = haptic_plume_experiment.viz_gate_node:main',
         ],
     },
 )
