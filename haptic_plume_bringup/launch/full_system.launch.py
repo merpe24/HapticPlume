@@ -35,6 +35,7 @@ def generate_launch_description():
     """
     # 1. Constants for paths to different files and folders
     package_name_bringup = 'haptic_plume_bringup'
+    package_name_description = 'haptic_plume_description'
     package_name_estimation = 'haptic_plume_estimation'
     package_name_experiment = 'haptic_plume_experiment'
 
@@ -48,6 +49,7 @@ def generate_launch_description():
 
     # 3. Launch configuration variables (alphabetical)
     condition = LaunchConfiguration('condition')
+    rviz_config = LaunchConfiguration('rviz_config')
     use_teleop = LaunchConfiguration('use_teleop')
 
     # 4. Declare the launch arguments
@@ -56,6 +58,14 @@ def generate_launch_description():
         default_value='2',
         choices=['0', '1', '2'],
         description='Trial condition: 0 visual only, 1 haptic only, 2 both'
+    )
+
+    declare_rviz_config_cmd = DeclareLaunchArgument(
+        name='rviz_config',
+        default_value='haptic_plume_description.rviz',
+        choices=['haptic_plume_description.rviz', 'operator.rviz'],
+        description='RViz view: the developer view (with ground truth) or '
+                    'participant view (operator.rviz, no ground truth)'
     )
 
     declare_use_teleop_cmd = DeclareLaunchArgument(
@@ -69,7 +79,11 @@ def generate_launch_description():
     # World, drone, gas server, Gazebo and RViz
     sim_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(sim_launch),
-        launch_arguments={'use_teleop': use_teleop}.items()
+        launch_arguments={
+            'use_teleop': use_teleop,
+            'rviz_config_file': PathJoinSubstitution(
+                [FindPackageShare(package_name_description), 'rviz', rviz_config]),
+        }.items()
     )
 
     # The particle filter
@@ -102,6 +116,7 @@ def generate_launch_description():
 
     # Declare the launch options
     ld.add_action(declare_condition_cmd)
+    ld.add_action(declare_rviz_config_cmd)
     ld.add_action(declare_use_teleop_cmd)
 
     # Add the actions, in data-flow order

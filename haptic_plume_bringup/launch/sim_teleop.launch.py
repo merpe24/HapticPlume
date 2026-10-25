@@ -69,10 +69,14 @@ def generate_launch_description():
         [FindPackageShare(package_name_description), 'config', 'obstacles.yaml']
     )
 
+    default_rviz_config_file = PathJoinSubstitution(
+        [FindPackageShare(package_name_description), 'rviz', 'haptic_plume_description.rviz']
+    )
     # 3. Launch configuration variables (alphabetical)
     headless = LaunchConfiguration('headless')
     obstacles_file = LaunchConfiguration('obstacles_file')
     prefix = LaunchConfiguration('prefix')
+    rviz_config_file = LaunchConfiguration('rviz_config_file')
     use_rviz = LaunchConfiguration('use_rviz')
     use_teleop = LaunchConfiguration('use_teleop')
     world_file = LaunchConfiguration('world_file')
@@ -102,6 +106,13 @@ def generate_launch_description():
         name='prefix',
         default_value='',
         description='Prefix applied to all link and joint names (multi-robot support)'
+    )
+
+    declare_rviz_config_file_cmd = DeclareLaunchArgument(
+        name='rviz_config_file',
+        default_value=default_rviz_config_file,
+        description='RViz config to open; operator.rviz for a participant'
+
     )
 
     declare_use_rviz_cmd = DeclareLaunchArgument(
@@ -147,6 +158,7 @@ def generate_launch_description():
                 launch_arguments={
                     'prefix': prefix,
                     'use_gazebo': 'true',
+                    'rviz_config_file': rviz_config_file,
                     'use_rviz': use_rviz
                 }.items())
         ],
@@ -202,6 +214,7 @@ def generate_launch_description():
     ld.add_action(declare_headless_cmd)
     ld.add_action(declare_obstacles_file_cmd)
     ld.add_action(declare_prefix_cmd)
+    ld.add_action(declare_rviz_config_file_cmd)
     ld.add_action(declare_use_rviz_cmd)
     ld.add_action(declare_use_teleop_cmd)
     ld.add_action(declare_world_file_cmd)

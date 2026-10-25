@@ -5,8 +5,8 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /LaserScan1/Topic1
-        - /Marker2/Topic1
-        - /Marker2/Namespaces1
+        - /Particles1/Topic1
+        - /Particles1/Namespaces1
       Splitter Ratio: 0.5
     Tree Height: 786
   - Class: rviz_common/Selection
@@ -264,7 +264,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
-      Name: Marker
+      Name: Belief
       Namespaces:
         belief: true
         confidence: true
@@ -278,7 +278,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
-      Name: Marker
+      Name: Particles
       Namespaces:
         particles: true
       Topic:
@@ -291,7 +291,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
-      Name: Marker
+      Name: Gas gauge
       Namespaces:
         gauge: true
         gauge_value: true
@@ -305,7 +305,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
-      Name: Marker
+      Name: Airflow
       Namespaces:
         wind: true
       Topic:
@@ -362,7 +362,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/XYOrbit
-      Distance: 32.249202728271484
+      Distance: 35.59899139404297
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
