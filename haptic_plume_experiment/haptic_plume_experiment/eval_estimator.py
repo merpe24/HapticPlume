@@ -51,6 +51,7 @@ from haptic_plume_estimation.agreement_gate import (
 from haptic_plume_estimation.consume import ConsumedSet, should_consume
 from haptic_plume_estimation.info_gain import best_waypoint, candidate_waypoints
 from haptic_plume_estimation.particle_filter import (
+    PAPER_PROCESS_SIGMA,
     PlumeFilterConfig,
     PlumeParticleFilter,
     PROJECT_Q,
@@ -116,6 +117,8 @@ class EvalConfig:
     stop_at_declaration: bool = False   # end the trial on the first consume (O3)
     n_twins: int = 0                    # agreement-gate twins; 0 declares on sigma
     agreement_m: float = AGREEMENT_M    # [m] twins must agree this closely
+    process_sigma_xy: float = None      # [m] x_s/y_s jitter per update
+    min_updates_after_reset: int = 0    # no declaration before this many updates; 0 = off
     speed: float = 1.0              # drone ground speed [m/s]
     max_steps: int = 1200           # 240 s of flight
     n_particles: int = 1500
@@ -145,9 +148,13 @@ class EvalConfig:
         :return: the matching PlumeFilterConfig
         :rtype: PlumeFilterConfig
         """
+        sigma = PAPER_PROCESS_SIGMA.copy()
+        if self.process_sigma_xy is not None:
+            sigma[0:2] = self.process_sigma_xy
         return PlumeFilterConfig(n_particles=self.n_particles, q=self.q,
                                  sigma_c=self.sigma_c,
-                                 d_cluster=self.d_cluster)
+                                 d_cluster=self.d_cluster,
+                                 process_sigma=sigma)
 
     @property
     def sensor_dt(self):
@@ -352,7 +359,8 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis',
 
             # --- consume: a tight enough belief becomes a localized source ---
             if (should_consume(pf.sigma_position_norm, config.sigma_c)
-                    and len(consumed) < config.max_sources):
+                    and len(consumed) < config.max_sources
+                    and pf.updates_since_reset >= config.min_updates_after_reset):
                 if gate is not None and not gate.agrees(pf):
                     # The twins disagree, so the tight belief is resampling
                     # luck, not evidence. Restart every filter and keep flying:

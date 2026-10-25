@@ -363,6 +363,11 @@ class PlumeParticleFilter:
         return float(np.linalg.norm(self._sigma_position))
 
     @property
+    def updates_since_reset(self):
+        """Fileter upadates since the last reset."""
+        return self._updates_since_reset
+
+    @property
     def n_eff(self):
         """Effective sample size before the most recent resampling step."""
         return self._n_eff
