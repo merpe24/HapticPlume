@@ -1,0 +1,9 @@
+# Request: start one trial (experiment_director resets drone, gas, and estimator. Then enables)
+uint8 condition         # ConditionConfig.VISUAL_ONLY / HAPTIC_ONLY / VISUAL_HAPTIC
+int32 scenario_seed     # seed handed to /hp/set_scenario, for exact world replay
+int32 pf_seed           # particle filter seed handed to /hp/reset_estimator
+string trial_id         # opaque label, e.g. "P07_C2_S3"
+---
+# Response
+bool success            # false: a reset step failed and the system stayed IDLE
+string message          # human-readable result of error

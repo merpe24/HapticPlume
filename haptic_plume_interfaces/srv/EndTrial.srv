@@ -1,0 +1,6 @@
+# Request: end the running trial (experiment_director switches every cue and display off)
+string reason           # free text for the log, e.g. "declared", "timeout", "aborted"
+---
+# Response
+bool success            # true if the trial was ended
+string message          # human-readable result or error

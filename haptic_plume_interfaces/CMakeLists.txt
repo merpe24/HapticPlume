@@ -23,6 +23,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ConditionConfig.msg"
   "srv/SetScenario.srv"
   "srv/ResetEstimator.srv"
+  "srv/StartTrial.srv"
+  "srv/EndTrial.srv"
   DEPENDENCIES std_msgs geometry_msgs
 )
 
