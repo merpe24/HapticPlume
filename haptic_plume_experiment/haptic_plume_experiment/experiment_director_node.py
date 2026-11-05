@@ -4,9 +4,11 @@ Run the experiment's trials: reset everything, then switch one condition on.
 
 Publishing Topics:
     /hp/condition (haptic_plume_interfaces/ConditionCondfig): Trial condition and flags
+    /hp/events/trial (haptic_plume_interfaces/TaskEvent): TRIAL_START / TRIAL_END with ids and seeds
 
 Services:
     /hp/start_trial (haptci_plume_interfaces/StartTrial): Reset everything, then enable a condition
+    /hp/end_trial (haptic_plume_interfaces/EndTrial): Switch everything off, log th end
 
 Services called:
     /hp/reset_drone (std_srvs/Trigger): Drone back to its fixed start, zero velocity
@@ -17,8 +19,8 @@ Services called:
 :date: October 26, 2026
 """
 
-from haptic_plume_interfaces.msg import ConditionConfig
-from haptic_plume_interfaces.srv import ResetEstimator, SetScenario, StartTrial
+from haptic_plume_interfaces.msg import ConditionConfig, TaskEvent
+from haptic_plume_interfaces.srv import EndTrial, ResetEstimator, SetScenario, StartTrial
 
 import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -83,6 +85,10 @@ class ExperimentDirector(Node):
             ResetEstimator, '/hp/reset_estimator', callback_group=self.client_group)
         self.service_start = self.create_service(
             StartTrial, '/hp/start_trial', self.start_trial_callback)
+        self.service_end = self.create_service(
+            EndTrial, '/hp/end_trial', self.end_trial_callback)
+        self.publisher_events = self.create_publisher(TaskEvent, '/hp/events/trial', 10)
+        self.trial_id = None    # the running trial, None whil IDLE
 
     def call(self, client, request):
         """Call one reset service and wait; raise if it is down, slow or refuses."""
@@ -111,11 +117,45 @@ class ExperimentDirector(Node):
             return response
 
         self.publisher_condition.publish(config)
+        self.trial_id = request.trial_id
+        self.publish_event(
+            TaskEvent.TRIAL_START,
+            f'trial {request.trial_id} condition {request.condition} '
+            f'scenario_seed {request.scenario_seed} pf_ssed {request.pf_seed}')
+        self.trial_id = request.trial_id
+        self.publish_event(
+            TaskEvent.TRIAL_START,
+            f'trial {request.trial_id} condition {request.condition} '
+            f'scenario_seed {request.scenario_seed} pf_seed {request.pf_seed}')
         response.success = True
         response.message = f'trial {request.trial_id} started'
         self.get_logger().info(response.message)
         return response
 
+    def end_trial_callback(self, request, response):
+        """Switch every cue and display off and log the end of the trail."""
+        self.publisher_condition.publish(make_idle())
+        if self.trial_id is None:
+            response.success = False
+            response.message = 'no trial running, already IDLE'
+            return response
+
+        self.publish_event(TaskEvent.TRIAL_END,
+                           f'trial {self.trial_id} reason {request.reason}')
+        response.success = True
+        response.message = f'trial {self.trial_id} ended: {request.reason}'
+        self.get_logger().info(response.message)
+        self.trial_id = None
+        return response
+
+    def publish_event(self, event_type, detail):
+        """Log a trial boundary on /hp/events/trial."""
+        event = TaskEvent()
+        event.header.stamp = self.get_clock().now().to_msg()
+        event.header.frame_id = 'map'
+        event.event_type = event_type
+        event.detail = detail
+        self.publisher_events.publish(event)
 
 def main(args=None):
     """Spin the director until Ctrl-C."""

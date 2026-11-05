@@ -4,18 +4,18 @@ Bring up the full HapticPlume system: sim, estimator and the visual display.
 
 Composes the existing launch files instead of repeating them: sim_teleop.launch.py
 for the world, drone and gas, estimator.launch.py for the particle filter, plus
-viz_gate_node for what the operator sees. Teleop defaults to OFF here, because a
+viz_gate_node for what the operator sees and experiment_director_node, which owns
+/hp/condition and starts and ends trials. Teleop defaults to OFF here, because a
 running teleop_mapper publishes /hp/cmd_vel at 100 Hz and out-votes fly_plume.py.
 
-The condition sender is a STAND-IN for Phase E's experiment director: it republishes
-one ConditionConfig every second so the display gate has something to obey.
+Nothing is drawn or felt until a trial is started with /hp/start_trial.
 
 :author: premmm
 :date: October 22, 2026
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -48,18 +48,10 @@ def generate_launch_description():
     )
 
     # 3. Launch configuration variables (alphabetical)
-    condition = LaunchConfiguration('condition')
     rviz_config = LaunchConfiguration('rviz_config')
     use_teleop = LaunchConfiguration('use_teleop')
 
     # 4. Declare the launch arguments
-    declare_condition_cmd = DeclareLaunchArgument(
-        name='condition',
-        default_value='2',
-        choices=['0', '1', '2'],
-        description='Trial condition: 0 visual only, 1 haptic only, 2 both'
-    )
-
     declare_rviz_config_cmd = DeclareLaunchArgument(
         name='rviz_config',
         default_value='haptic_plume_description.rviz',
@@ -99,23 +91,18 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Stand-in for the experiment director: one ConditionConfig every second
-    condition_cmd = ExecuteProcess(
-        cmd=['ros2', 'topic', 'pub', '-r', '1',
-             '--qos-reliability', 'reliable',
-             '--qos-durability', 'transient_local',
-             '/hp/condition', 'haptic_plume_interfaces/msg/ConditionConfig',
-             ['{condition: ', condition,
-              ', show_belief_markers: true, show_particles: true,'
-              ' show_gauge: true, show_wind_arrow: true, trial_id: test}']],
-        output='log'
+    # Owns /hp/condition: resets everything, then enables one condition per trial
+    director_cmd = Node(
+        package=package_name_experiment,
+        executable='experiment_director_node',
+        name='experiment_director',
+        output='screen'
     )
 
     # 6. Create the launch description and populate
     ld = LaunchDescription()
 
     # Declare the launch options
-    ld.add_action(declare_condition_cmd)
     ld.add_action(declare_rviz_config_cmd)
     ld.add_action(declare_use_teleop_cmd)
 
@@ -123,6 +110,6 @@ def generate_launch_description():
     ld.add_action(sim_cmd)
     ld.add_action(estimator_cmd)
     ld.add_action(viz_gate_cmd)
-    ld.add_action(condition_cmd)
+    ld.add_action(director_cmd)
 
     return ld
