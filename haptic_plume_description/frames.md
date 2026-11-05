@@ -67,6 +67,14 @@ per step, and no wind-direction information could survive.
 | Ground plane | `z = 0` | `config/obstacles.yaml` |
 | Airframe | Holybro X500 V2, 500 mm wheelbase | product spec |
 | Drone collision radius | 0.377 m (250 mm motor + 127 mm prop) | derived, `drone_prop.urdf.xacro` |
+| Trial start position | **`[1, 1, 1]`, the same for every trial** | `start_position`, `drone_params.yaml` |
+
+**`Scenario.start_position` is NOT used by the live system** (decided 2026-10-26).
+`experiment_director_node` calls `/hp/reset_drone` at the start of every trial, which
+puts the drone at `drone_params.yaml`'s `start_position`. The scenario's own random
+start is only used by the headless harness (`eval_estimator.py`). One fixed start keeps
+the start-to-leak geometry from becoming a per-participant confound beyond what the
+scenario seed already varies.
 
 ---
 

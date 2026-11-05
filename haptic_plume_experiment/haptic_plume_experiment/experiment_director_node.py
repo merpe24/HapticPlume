@@ -3,18 +3,18 @@
 Run the experiment's trials: reset everything, then switch one condition on.
 
 Publishing Topics:
-    /hp/condition (haptic_plume_interfaces/ConditionCondfig): Trial condition and flags
-    /hp/events/trial (haptic_plume_interfaces/TaskEvent): TRIAL_START / TRIAL_END with ids and seeds
+    /hp/condition (haptic_plume_interfaces/ConditionConfig): Trial condition and flags
+    /hp/events/trial (haptic_plume_interfaces/TaskEvent): TRIAL_START / TRIAL_END, ids and seeds
 
 Services:
-    /hp/start_trial (haptci_plume_interfaces/StartTrial): Reset everything, then enable a condition
-    /hp/end_trial (haptic_plume_interfaces/EndTrial): Switch everything off, log th end
+    /hp/start_trial (haptic_plume_interfaces/StartTrial): Reset everything, then enable a condition
+    /hp/end_trial (haptic_plume_interfaces/EndTrial): Switch everything off, log the end
 
 Services called:
     /hp/reset_drone (std_srvs/Trigger): Drone back to its fixed start, zero velocity
     /hp/set_scenario (haptic_plume_interfaces/SetScenario): New gas world, one leak, from the seed
-    /hp/reset_estimator (haptic_plume_interfaces/ResetEstimator): Fresh belief, consumed set cleared
-    
+    /hp/reset_estimator (haptic_plume_interfaces/ResetEstimator): Fresh belief, consumed cleared
+
 :author: premmm
 :date: October 26, 2026
 """
@@ -35,11 +35,13 @@ SERVICE_TIMEOUT = 5.0   # [s] a reset step slower than this counts as failed
 VISUAL_CONDITIONS = (ConditionConfig.VISUAL_ONLY, ConditionConfig.VISUAL_HAPTIC)
 HAPTIC_CONDITIONS = (ConditionConfig.HAPTIC_ONLY, ConditionConfig.VISUAL_HAPTIC)
 
+
 def make_idle():
     """Return a condition with every cue and display off: zero force, empty RViz."""
     config = ConditionConfig()
     config.trial_id = 'idle'
     return config
+
 
 def make_condition(condition, trial_id, scenario_seed, pf_seed):
     """Return one trial's ConditionConfig; the only place a condition maps to flags."""
@@ -58,6 +60,7 @@ def make_condition(condition, trial_id, scenario_seed, pf_seed):
     config.scenario_seed = scenario_seed
     config.pf_seed = pf_seed
     return config
+
 
 class ExperimentDirector(Node):
     """Own the trial lifecycle; the only publisher on /hp/condition."""
@@ -156,6 +159,7 @@ class ExperimentDirector(Node):
         event.event_type = event_type
         event.detail = detail
         self.publisher_events.publish(event)
+
 
 def main(args=None):
     """Spin the director until Ctrl-C."""
