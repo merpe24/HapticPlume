@@ -8,8 +8,10 @@ switch everything off, because IDLE is what makes the forces zero during a reset
 :date: October 26, 2026
 """
 
+import subprocess
+
 from haptic_plume_experiment.experiment_director_node import (
-    make_condition, make_idle
+    git_state, make_condition, make_idle
 )
 
 from haptic_plume_interfaces.msg import ConditionConfig
@@ -51,3 +53,23 @@ def test_unknown_condition_is_refused():
     """A condition number outside 0 to 2 is an error."""
     with pytest.raises(ValueError):
         make_condition(3, 't1', 10, 0)
+
+
+def test_git_state_outside_a_repo_is_empty(tmp_path):
+    """A wrong source_dir gives an empty commit, which must read as unknown."""
+    assert git_state(str(tmp_path)) == ('', False)
+
+
+def test_git_state_sees_uncommitted_edits(tmp_path):
+    """A fresh commit is clean; editing a tracked file makes it dirty."""
+    def git(*args):
+        subprocess.run(['git', '-C', str(tmp_path), '-c', 'user.name=t',
+                        '-c', 'user.email=t@t', *args], check=True, capture_output=True)
+    (tmp_path / 'a.txt').write_text('one')
+    git('init')
+    git('add', 'a.txt')
+    git('commit', '-m', 'first')
+    commit, dirty = git_state(str(tmp_path))
+    assert len(commit) == 40 and not dirty
+    (tmp_path / 'a.txt').write_text('two')
+    assert git_state(str(tmp_path)) == (commit, True)

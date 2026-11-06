@@ -18,11 +18,12 @@ Publishing Topics:
     /hp/cmd_vel (geometry_msgs/TwistStamped): World-frame velocity at ~200 Hz
 
 Services called:
-    /hp/set_scenario (haptic_plume_interfaces/SetScenario): Pins the world and returns ground truth
-    /hp/reset_estimator (haptic_plume_interfaces/ResetEstimator): Clears the belief before the run
+    /hp/set_scenario (haptic_plume_interfaces/SetScenario): Route ground truth, called pre-trial
+    /hp/start_trial (haptic_plume_interfaces/StartTrial): Director resets all, starts the bag
+    /hp/end_trial (haptic_plume_interfaces/EndTrial): Director stops the bag, writes trial.yaml
 
 Usage:
-    python3 fly_plume.py [seed] [duration_s]
+    python3 fly_plume.py [seed] [duration_s] [condition]   (condition 0/1/2, default 2)
 
 READ THIS BEFORE BELIEVING A RESULT:
   * teleop_mapper publishes /hp/cmd_vel at 100 Hz even with the deadman
@@ -48,7 +49,7 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import TwistStamped
 
 from haptic_plume_interfaces.msg import BeliefSummary, GasConcentration, TaskEvent
-from haptic_plume_interfaces.srv import ResetEstimator, SetScenario
+from haptic_plume_interfaces.srv import EndTrial, SetScenario, StartTrial
 
 from nav_msgs.msg import Odometry
 
@@ -164,6 +165,7 @@ class Flyer(Node):
 def main():
     seed = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     budget = float(sys.argv[2]) if len(sys.argv) > 2 else 240.0
+    condition = int(sys.argv[3]) if len(sys.argv) > 3 else 2
 
     rclpy.init()
     node = Flyer()
@@ -178,12 +180,15 @@ def main():
     truth = scenario.true_source_positions[0]
     source = np.array([truth.x, truth.y, truth.z])
     theta = scenario.wind_direction
-    # clear_consumed, or a second flight can never declare: max_sources is 1, so
-    # the kept source blocks the next consume and its m_hat is subtracted from
-    # every later sample (Eq. 12).
-    reset = ResetEstimator.Request()
-    reset.clear_consumed = True
-    node.call(ResetEstimator, '/hp/reset_estimator', reset)
+
+    trial = StartTrial.Request()
+    trial.condition, trial.scenario_seed, trial.pf_seed = condition, seed, 0
+    trial.trial_id = f'fly_s{seed}_c{condition}'
+    started = node.call(StartTrial, '/hp/start_trial', trial)
+    if started is None or not started.success:
+        print(f'could not start the trial: {started.message if started else "no reply"}')
+        rclpy.shutdown()
+        return
 
     if node.count_publishers('/hp/cmd_vel') > 1:
         print('WARNING: another node publishes /hp/cmd_vel and will out-vote this '
@@ -235,6 +240,9 @@ def main():
     for _ in range(60):                    # bleed the command to zero before exiting
         node.send([0.0, 0.0])
         time.sleep(0.005)
+    end = EndTrial.Request()
+    end.reason = 'declared' if node.declared is not None else 'not declared'
+    node.call(EndTrial, '/hp/end_trial', end)
     print(f'done at t={time.time() - start:.0f} s, waypoint {index}/{len(route)}',
           flush=True)
     rclpy.shutdown()
