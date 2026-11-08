@@ -28,6 +28,8 @@ setup(
             'eval_estimator = haptic_plume_experiment.eval_estimator:main',
             'viz_gate_node = haptic_plume_experiment.viz_gate_node:main',
             'experiment_director_node = haptic_plume_experiment.experiment_director_node:main',
+            'analyze_trials = haptic_plume_experiment.analyze_trials:main',
+            'replay_bag = haptic_plume_experiment.replay_bag:main',
         ],
     },
 )
