@@ -1,5 +1,9 @@
 CLAUDE.md
 
+# Literature research notes and reports (local only; repo must stay anonymous for review)
+research_notes/
+reports/
+
 # colcon artifacts. These belong at the WORKSPACE root (~/Projects/ros2_ws),
 # never inside a package — see ros2-sim-workflow skill 1. Listed here so a
 # stray `colcon build` run from this directory can never be committed.

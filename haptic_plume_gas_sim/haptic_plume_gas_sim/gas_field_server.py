@@ -59,6 +59,7 @@ from geometry_msgs.msg import Point
 from haptic_plume_core.scenario import random_scenario
 
 from haptic_plume_gas_sim.sensor_model import FirstOrderSensor, GasField, GasSensor
+from haptic_plume_gas_sim.puff_model import AGE, PuffField, X, Y, Z
 
 from haptic_plume_interfaces.msg import GasConcentration
 from haptic_plume_interfaces.srv import SetScenario
@@ -100,8 +101,11 @@ class GasFieldServer(Node):
         self.declare_parameter('publish_rate', 20.0)
         self.declare_parameter('n_sources', 1)
         self.declare_parameter('seed', 42)
-        self.declare_parameter('leaks_on_pipes', True)   # mirrors gas_params.yaml
+        self.declare_parameter('leaks_on_pipes', True)      # mirrors gas_params.yaml
         self.declare_parameter('obstacles_file', '')
+        self.declare_parameter('gas_model', 'plume')        # 'plume' | 'puff'
+        self.declare_parameter('meander_sigma_deg', 0.0)    # puff mode: wind swing [deg]
+        self.declare_parameter('meander_tau', 10.0)         # puff mode: swing time [s]
         self.declare_parameter('tau_rise', 3.0)
         self.declare_parameter('tau_rec', 8.0)
         self.declare_parameter('sigma_noise', 2.0e-3)
@@ -126,6 +130,9 @@ class GasFieldServer(Node):
         self.marker_alpha_gain = self.get_parameter('marker_alpha_gain').value
         self.marker_alpha_min = self.get_parameter('marker_alpha_min').value
         self.marker_airflow_length = self.get_parameter('marker_airflow_length').value
+        self.gas_model = self.get_parameter('gas_model').value
+        if self.gas_model not in ('plume', 'puff'):
+            raise ValueError("gas_model must be 'plume' or 'puff'")
 
         # Resolved once here rather than per scenario: a missing or malformed
         # obstacles.yaml must kill the node at start-up, not halfway through a
@@ -156,6 +163,8 @@ class GasFieldServer(Node):
         self.publisher_true = self.create_publisher(
             GasConcentration, '/hp/gas/true_concentration', 10)
 
+        self.publisher_puffs = self.create_publisher(
+            MarkerArray, '/hp/gas/puff_markers', 10)
         # Latched: the markers change only when the scenario does, so RViz must
         # be able to start late and still receive the current field.
         latched_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -180,9 +189,43 @@ class GasFieldServer(Node):
             self.get_parameter('seed').value)
 
         self.timer = self.create_timer(self.dt, self.sensor_callback)
+        self.puff_timer = self.create_timer(0.5, self.publish_puff_markers)
 
         self.get_logger().info(
             f'gas_field_server up at {self.publish_rate:.1f} Hz (sensor dt {self.dt:.4f} s)')
+
+    def publish_puff_markers(self):
+        """Draw every 10th puff as a sphere. GROUND TRUTH, debug only (D6)."""
+        if self.puff_field is None:
+            return
+        stamp = self.get_clock().now().to_msg()
+        markers = MarkerArray()
+        clear = Marker()
+        clear.header.frame_id = self.map_frame
+        clear.action = Marker.DELETEALL     # puff count changes every tick
+        markers.markers.append(clear)
+
+        sigma_y, sigma_z = self.puff_field.sigmas()
+        every = slice(None, None, 10)
+        for index, (puff, s_y, s_z) in enumerate(zip(
+            self.puff_field.puffs[every], sigma_y[every], sigma_z[every])):
+            marker = Marker()
+            marker.header.frame_id = self.map_frame
+            marker.header.stamp = stamp
+            marker.ns = 'puffs'
+            marker.id = index
+            marker.type = Marker.SPHERE
+            marker.pose.position = Point(
+                x=float(puff[X]), y=float(puff[Y]), z=float(puff[Z]))
+            marker.pose.orientation.w = 1.0
+            marker.scale.x = marker.scale.y = 2.0 * float(s_y)  # wide sideways
+            marker.scale.z = 2.0 * float(s_z)                   # thin vertically
+            # Colour by age: yellow when just released -> red after 30 s.
+            old = min(float(puff[AGE]) / 30.0, 1.0)
+            marker.color = ColorRGBA(r=1.0, g=1.0 - old, b=0.0, a=0.5)
+            markers.markers.append(marker)
+
+        self.publisher_puffs.publish(markers)
 
     def _load_pipe_segments(self, obstacles_file):
         """
@@ -243,6 +286,13 @@ class GasFieldServer(Node):
             sigma_noise=self.sigma_noise,
             sigma_fluct=self.sigma_fluct)
 
+        # Own genertaor: the puffs never touch the sensor's noise stream.
+        self.puff_field = PuffField(
+            scenario.alphas, np.random.default_rng(int(seed) + 30_000), 
+            self.dt, scenario.search_area,
+            meander_sigma_deg=self.get_parameter('meander_sigma_deg').value,
+            meander_tau=self.get_parameter('meander_tau').value,
+            ) if self.gas_model == 'puff' else None
         self.scenario = scenario
         self.field = GasField(scenario.alphas)
         self.sensor = sensor
@@ -260,6 +310,8 @@ class GasFieldServer(Node):
 
     def sensor_callback(self):
         """Sample the field at the drone's position and publish one measurement."""
+        if self.puff_field is not None:
+            self.puff_field.step()
         if self.latest_odom is None:
             self.get_logger().warn(
                 'no /hp/odom received yet -- not sampling',
@@ -271,7 +323,8 @@ class GasFieldServer(Node):
         # The odom pose is expressed in the odom frame, and map -> odom is the
         # identity transform (frames.md 1), so these numbers are already map
         # coordinates. If that ever stops being identity, transform here.
-        c_true = float(self.field.concentration(position.x, position.y, position.z))
+        gas = self.puff_field if self.puff_field is not None else self.field
+        c_true = float(gas.concentration(position.x, position.y, position.z))
 
         # Nominal dt on purpose: a measured wall-clock delta would break the
         # exact round trip with the Phase C compensator (module docstring).

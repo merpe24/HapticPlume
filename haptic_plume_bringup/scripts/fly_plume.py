@@ -112,6 +112,38 @@ def waypoints(source, theta, segments):
         dist -= ADVANCE
     return out
 
+VIA = 1.5                   # [m] how far past a pipe end a detour goes
+
+
+def crosses_pipe(a, b, segments):
+    """True if the straight leg a->b passes within contact distance of a capsule."""
+    for seg in segments:
+        p0, p1 = np.array(seg['p0'][:2], float), np.array(seg['p1'][:2], float)
+        span = max(float(np.dot(p1 - p0, p1 - p0)), 1e-9)
+        for t in np.linspace(0.0, 1.0, 100):
+            point = a[:2] + t * (b[:2] - a[:2])
+            u = np.clip(np.dot(point - p0, p1 - p0) / span, 0.0, 1.0)
+            if np.linalg.norm(point - (p0 + u * (p1 - p0))) < seg['radius'] + 0.40:
+                return True
+    return False
+
+
+def add_detours(route, start, segments):
+    """Go round the nearer end of main_run wherever a leg would cut through it."""
+    run = next(s for s in segments if s['name'] == 'main_run')
+    x, (lo, hi) = run['p0'][0], sorted((run['p0'][1], run['p1'][1]))
+    ends = [np.array([x, lo - VIA, 1.0]), np.array([x, hi + VIA, 1.0])]
+    out, here = [], np.array(start, float)
+    for target in route:
+        if crosses_pipe(here, target, segments):
+            clear = [e for e in ends if not crosses_pipe(here, e, segments)
+                     and not crosses_pipe(e, target, segments)]
+            if clear:
+                out.append(min(clear, key=lambda e: np.linalg.norm(e - here)
+                               + np.linalg.norm(target - e)))
+        out.append(target)
+        here = target
+    return out
 
 class Flyer(Node):
     """Closed-loop waypoint follower that logs the belief alongside the truth."""
@@ -197,7 +229,8 @@ def main():
 
     while node.pos is None:
         rclpy.spin_once(node, timeout_sec=0.1)
-    route = waypoints(source, theta, load_segments())
+    segments = load_segments()
+    route = add_detours(waypoints(source, theta, segments), node.pos, segments)
     print(f'seed {seed}: source ({source[0]:.2f}, {source[1]:.2f}), '
           f'theta {math.degrees(theta):.1f} deg, {len(route)} waypoints, '
           f'{budget:.0f} s budget', flush=True)

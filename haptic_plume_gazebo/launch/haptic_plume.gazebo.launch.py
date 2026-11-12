@@ -114,11 +114,13 @@ def generate_launch_description():
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')),
         launch_arguments=[('gz_args', [' -r -s -v 4 ', world_path])])
 
-    # Start the Gazebo client (the GUI) unless running headless
+    # Start the Gazebo client (the GUI) unless running headless. Our own
+    # gui.config opens top-down, +x right / +y up, matching RViz.
+    gui_config_path = os.path.join(pkg_share_gazebo, 'config', 'gui.config')
     start_gazebo_client_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')),
-        launch_arguments={'gz_args': ['-g ']}.items(),
+        launch_arguments={'gz_args': ['-g --gui-config ', gui_config_path]}.items(),
         condition=UnlessCondition(headless))
 
     # Bridge ROS topics and Gazebo messages: the pose feed out, camera_info back
