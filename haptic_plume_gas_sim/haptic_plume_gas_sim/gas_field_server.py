@@ -58,8 +58,8 @@ from geometry_msgs.msg import Point
 
 from haptic_plume_core.scenario import random_scenario
 
-from haptic_plume_gas_sim.sensor_model import FirstOrderSensor, GasField, GasSensor
 from haptic_plume_gas_sim.puff_model import AGE, PuffField, X, Y, Z
+from haptic_plume_gas_sim.sensor_model import FirstOrderSensor, GasField, GasSensor
 
 from haptic_plume_interfaces.msg import GasConcentration
 from haptic_plume_interfaces.srv import SetScenario
@@ -208,7 +208,7 @@ class GasFieldServer(Node):
         sigma_y, sigma_z = self.puff_field.sigmas()
         every = slice(None, None, 10)
         for index, (puff, s_y, s_z) in enumerate(zip(
-            self.puff_field.puffs[every], sigma_y[every], sigma_z[every])):
+                self.puff_field.puffs[every], sigma_y[every], sigma_z[every])):
             marker = Marker()
             marker.header.frame_id = self.map_frame
             marker.header.stamp = stamp
@@ -288,7 +288,7 @@ class GasFieldServer(Node):
 
         # Own genertaor: the puffs never touch the sensor's noise stream.
         self.puff_field = PuffField(
-            scenario.alphas, np.random.default_rng(int(seed) + 30_000), 
+            scenario.alphas, np.random.default_rng(int(seed) + 30_000),
             self.dt, scenario.search_area,
             meander_sigma_deg=self.get_parameter('meander_sigma_deg').value,
             meander_tau=self.get_parameter('meander_tau').value,

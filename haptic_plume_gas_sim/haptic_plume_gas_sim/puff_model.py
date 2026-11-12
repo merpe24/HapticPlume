@@ -14,26 +14,27 @@ import numpy as np
 # Columns of PuffField.puffs, one row per puff.
 X, Y, Z, MASS, AGE = range(5)
 
+
 class PuffField:
     """Gas released as puffs that drift with the airflow."""
 
-    def __init__(self, alphas, rng, dt, serach_area, sigma0=0.01, margin=2.0,
+    def __init__(self, alphas, rng, dt, search_area, sigma0=0.01, margin=2.0,
                  meander_sigma_deg=0.0, meander_tau=10.0):
         """
         Start an empty room around the scenario's leaks.
-        
+
         :param alphas: (L, 8) plume parameters. GasField takes them
         :param rng: numpy Generator, used only in step(), the gas never
         depends on where the drone flies
         :param dt: fixed tick [s] = 1 / publish_rate
-        :param serach_area: (2, 2) [[x_min, x_max], [y_min, y_max]] [m]
+        :param search_area: (2, 2) [[x_min, x_max], [y_min, y_max]] [m]
         :param sigma0: new puff size [m]
         :param margin: keep puffs this far past the walls
         """
         self.alphas = np.atleast_2d(np.asarray(alphas, dtype=float))
         self.rng = rng
         self.dt = float(dt)
-        self.search_area = np.asarray(serach_area, dtype=float)
+        self.search_area = np.asarray(search_area, dtype=float)
         self.puffs = np.empty((0, 5))
         self.sigma0 = float(sigma0)     # new puff size [m]; >0.01 inflates the thin sheet
         self.margin = float(margin)     # keep puffs this far past the walls [m]
@@ -48,10 +49,9 @@ class PuffField:
             self.step()
 
     def step(self):
-        """Release one puff per leak, move every puff, drop those 
-        outside the room."""
+        """Release one puff per leak, move every puff, drop those outside the room."""
         new = np.zeros((len(self.alphas), 5))           # at the leak
-        new[:, X:Z + 1] = self.alphas[:, 0:3]         
+        new[:, X:Z + 1] = self.alphas[:, 0:3]
         new[:, MASS] = self.alphas[:, 4] * self.dt      # Q * dt [kg]
         self.puffs = np.vstack([self.puffs, new])
 
@@ -84,7 +84,7 @@ class PuffField:
         return sigma_y, sigma_z
 
     def concentration(self, x_w, y_w, z_w):
-        """Sum every puff's 3D Gaussian at one point [kg/m^3]. No randomness here"""
+        """Sum every puff's 3D Gaussian at one point [kg/m^3]. No randomness here."""
         sigma_y, sigma_z = self.sigmas()
         dx = x_w - self.puffs[:, X]
         dy = y_w - self.puffs[:, Y]
