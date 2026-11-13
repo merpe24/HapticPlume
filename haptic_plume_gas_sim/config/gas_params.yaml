@@ -28,8 +28,7 @@ gas_field_server:
     leaks_on_pipes: true
     obstacles_file: ""          # empty -> haptic_plume_description default
 
-    gas_model: puff             # 'plume' (validated) | 'puff' (Nov 2026, testing)
-                                # -- set back to plume before comitting
+    gas_model: plume            # 'plume' (validated) | 'puff' (Nov 2026, testing)
     meander_sigma_deg: 15.0     # puff mode: typical wind swing [deg]; 0 = steady
     meander_tau: 10.0           # puff mode: how long one swing lasts [s]
 

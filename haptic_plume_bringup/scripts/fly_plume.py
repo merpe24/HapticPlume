@@ -112,11 +112,12 @@ def waypoints(source, theta, segments):
         dist -= ADVANCE
     return out
 
-VIA = 1.5                   # [m] how far past a pipe end a detour goes
+
+VIA = 1.5                  # [m] how far past a pipe end a detour goes
 
 
 def crosses_pipe(a, b, segments):
-    """True if the straight leg a->b passes within contact distance of a capsule."""
+    """Return True if the straight leg a->b passes within contact distance of a capsule."""
     for seg in segments:
         p0, p1 = np.array(seg['p0'][:2], float), np.array(seg['p1'][:2], float)
         span = max(float(np.dot(p1 - p0, p1 - p0)), 1e-9)
@@ -144,6 +145,7 @@ def add_detours(route, start, segments):
         out.append(target)
         here = target
     return out
+
 
 class Flyer(Node):
     """Closed-loop waypoint follower that logs the belief alongside the truth."""
