@@ -139,6 +139,9 @@ class GasField:
         """Return the number of true sources in the field."""
         return int(self.alphas.shape[0])
 
+    def step(self):
+        """Advance the field one tick the analytic plume is steady, so nothing changes."""
+
     def concentration(self, x_w, y_w, z_w):
         """
         Evaluate the true total concentration at world-frame point(s).

@@ -156,7 +156,8 @@ def test_mean_pair_distance_with_unequal_counts():
     assert mean_pair_distance(truth, np.empty((0, 3))) is None
 
 
-def test_trial_is_reproducible_from_its_seed():
+@pytest.mark.parametrize('gas_model', ['plume', 'puff'])
+def test_trial_is_reproducible_from_its_seed(gas_model):
     """
     Decision D7: the same seed replays the same belief, exactly.
 
@@ -165,7 +166,7 @@ def test_trial_is_reproducible_from_its_seed():
     from its log rather than from memory.
     """
     scenario = random_scenario(1, seed=3)
-    config = small_config()
+    config = small_config(gas_model=gas_model)
     first = run_trial(scenario, config, seed=3)
     second = run_trial(scenario, config, seed=3)
     assert first.n_found == second.n_found
@@ -280,6 +281,7 @@ def test_default_config_leaves_every_live_extra_off():
     assert config.drone_radius is None
     assert not config.stop_at_declaration
     assert config.n_twins == 0
+    assert config.gas_model == 'plume'
 
 
 def test_live_config_matches_the_node_parameter_file():

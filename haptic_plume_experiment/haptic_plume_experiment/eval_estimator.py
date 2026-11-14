@@ -62,6 +62,7 @@ from haptic_plume_estimation.sensor_compensation import (
     InverseFeedforwardCompensator,
 )
 
+from haptic_plume_gas_sim.puff_model import PuffField
 from haptic_plume_gas_sim.sensor_model import FirstOrderSensor, GasField, GasSensor
 
 import numpy as np
@@ -140,6 +141,9 @@ class EvalConfig:
     gamma: float = 5.0              # compensator low-pass coefficient [rad/s]
     sigma_noise: float = 2.0e-3     # white sensor noise [kg/m^3]
     sigma_fluct: float = 0.2        # lognormal turbulence fluctuation [-]
+    gas_model: str = 'plume'        # 'plume' (Phase A) | 'puff' (puff_model.py)
+    meander_sigma_deg: float = 15.0  # puff mode: typical wind swing [deg]; 0 = steady
+    meander_tau: float = 10.0       # puff mode: how long one swing lasts [s]
 
     def filter_config(self):
         """
@@ -289,7 +293,17 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis',
     sensor_dt = config.sensor_dt
     compensator_tau_rec = (config.tau_rec if config.compensator_tau_rec is None
                            else config.compensator_tau_rec)
-    field_truth = GasField(scenario.alphas)
+    if config.gas_model == 'puff':
+        # Own generator, seeded as gas_field_server seeds it: the gas never
+        # depends on the sensor noise or on where the drone flies.
+        field_truth = PuffField(scenario.alphas,
+                                np.random.default_rng(seed + 30_000),
+                                sensor_dt, scenario.search_area,
+                                meander_sigma_deg=config.meander_sigma_deg,
+                                meander_tau=config.meander_tau)
+    else:
+        field_truth = GasField(scenario.alphas)
+
     sensor = GasSensor(
         FirstOrderSensor(config.tau_rise, config.tau_rec, sensor_dt),
         sensor_rng, sigma_noise=config.sigma_noise,
@@ -330,6 +344,7 @@ def run_trial(scenario, config=None, seed=0, planner='infotaxis',
     plan_every = config.plan_every * config.pf_decimation
     for sample in range(config.max_steps * config.pf_decimation):
         # --- sense: truth -> lagged, noisy measurement -> compensated ---
+        field_truth.step()
         c_true = float(field_truth.concentration(*position))
         z_ff = compensator.update(sensor.measure(c_true))
 
@@ -1315,6 +1330,9 @@ def main(args=None):
                         help='run the chain as the live system does: 20 Hz '
                              'compensation, 5 Hz filter, one leak, agreement '
                              'gate, drone clamped off the pipes')
+    parser.add_argument('--gas-model', default='plume', choices=('plume', 'puff'),
+                        help="'puff' flies on the meandering puff gas "
+                             '(puff_model.py) instead of the analytic plume')
     parsed = parser.parse_args(args)
 
     segments = (load_pipe_segments(parsed.obstacles_file)
@@ -1335,6 +1353,10 @@ def main(args=None):
     if parsed.quick:
         config = EvalConfig(max_steps=200, n_particles=600, mi_particles=200)
         trials, sources = 2, [1, 2]
+
+    config = replace(config, gas_model=parsed.gas_model)
+    if parsed.gas_model == 'puff':
+        print('Puff gas (meandering) -- NOT the Phase A baseline.')
 
     if parsed.study in ('suite', 'both'):
         grouped = _run_grouped(sources, trials, parsed.seed, config, pipes,
