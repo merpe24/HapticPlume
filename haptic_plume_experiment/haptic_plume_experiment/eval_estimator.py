@@ -1333,6 +1333,12 @@ def main(args=None):
     parser.add_argument('--gas-model', default='plume', choices=('plume', 'puff'),
                         help="'puff' flies on the meandering puff gas "
                              '(puff_model.py) instead of the analytic plume')
+    parser.add_argument('--meander-deg', type=float,
+                        default=EvalConfig.meander_sigma_deg,
+                        help='puff mode: wind swing [deg]; 0 = steady')
+    parser.add_argument('--sigma-fluct', type=float,
+                        default=EvalConfig.sigma_fluct,
+                        help='lognormal sensor flicker [-]; 0 = off')
     parsed = parser.parse_args(args)
 
     segments = (load_pipe_segments(parsed.obstacles_file)
@@ -1354,7 +1360,9 @@ def main(args=None):
         config = EvalConfig(max_steps=200, n_particles=600, mi_particles=200)
         trials, sources = 2, [1, 2]
 
-    config = replace(config, gas_model=parsed.gas_model)
+    config = replace(config, gas_model=parsed.gas_model,
+                     meander_sigma_deg=parsed.meander_deg,
+                     sigma_fluct=parsed.sigma_fluct)
     if parsed.gas_model == 'puff':
         print('Puff gas (meandering) -- NOT the Phase A baseline.')
 
